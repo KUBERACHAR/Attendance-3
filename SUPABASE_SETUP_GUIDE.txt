@@ -1,0 +1,213 @@
+Attendance Management System - Supabase Setup Guide
+===================================================
+
+This guide explains how to prepare Supabase Auth, database roles, environment
+variables, and the React frontend.
+
+
+1. Prerequisites
+----------------
+
+- Node.js 20 or newer
+- npm, included with Node.js
+- A Supabase account: https://supabase.com
+- A code editor such as VS Code
+
+On Windows PowerShell, npm may be blocked by the execution policy. If that
+happens, use npm.cmd instead of npm:
+
+  npm.cmd install
+  npm.cmd run dev
+
+
+2. Create a Supabase Project
+----------------------------
+
+1. Sign in to Supabase.
+2. Click "New project".
+3. Select your organization.
+4. Enter a project name, for example:
+
+   attendance-management-system
+
+5. Create a strong database password and store it safely.
+6. Choose the nearest region.
+7. Click "Create new project".
+
+
+3. Create Database Tables, Roles, and Policies
+----------------------------------------------
+
+1. Open your Supabase project dashboard.
+2. Go to SQL Editor.
+3. Click "New query".
+4. Open this project file:
+
+   supabase/schema.sql
+
+5. Copy the full SQL content into the SQL Editor.
+6. Click "Run".
+
+The SQL creates:
+
+- admin_users
+- faculties
+- subjects
+- students
+- attendance_records
+- attendance_report public readonly view
+- helper functions for role detection and faculty login ID lookup
+- Row Level Security policies for admin and faculty access
+
+
+4. Create the First Admin Login
+-------------------------------
+
+The admin logs in directly with email and password.
+
+1. Go to Authentication > Users in Supabase.
+2. Click "Add user" or "Invite user".
+3. Create the admin user with email and password.
+4. If you are developing locally, you may enable "Auto Confirm User".
+5. Go back to SQL Editor and run this with the same email:
+
+   insert into public.admin_users (email)
+   values ('admin@example.com')
+   on conflict (email) do nothing;
+
+Replace admin@example.com with your real admin email.
+
+Only emails present in public.admin_users are accepted as admins by the app.
+
+
+5. Create Faculty Logins
+------------------------
+
+Faculty members use an admin-specified Faculty Login ID in the app, but
+Supabase Auth still stores their real email and password.
+
+Admin setup flow:
+
+1. Sign in to the app as admin.
+2. Open Faculty.
+3. Add a faculty member with:
+
+   - Faculty Login ID, for example FAC001
+   - Name
+   - Email
+   - Department
+   - Phone, optional
+
+4. In Supabase, go to Authentication > Users.
+5. Create a Supabase Auth user for that faculty email and assign a password.
+6. Give the faculty member only their Faculty Login ID and password.
+
+Faculty login flow:
+
+1. Faculty selects Faculty in the login panel.
+2. Faculty enters the Faculty Login ID, for example FAC001.
+3. Faculty enters the password created in Supabase Auth.
+4. The app securely resolves the Faculty Login ID to the registered email and
+   signs in through Supabase Auth.
+
+Faculty users can manage attendance only for subjects assigned to them.
+
+
+6. Student Access
+-----------------
+
+Students do not need any login.
+
+They can open the app and view the readonly Attendance Reports screen. The
+student view has no create, edit, or delete actions.
+
+
+7. Get Supabase API Credentials
+-------------------------------
+
+1. In Supabase, open Project Settings.
+2. Go to API.
+3. Copy the Project URL.
+4. Copy the anon public API key.
+
+
+8. Configure Environment Variables
+----------------------------------
+
+In the project root, create a file named:
+
+  .env
+
+Add:
+
+  VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+  VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+
+Do not commit real environment values to a public repository.
+
+
+9. Install and Run
+------------------
+
+Install dependencies:
+
+  npm install
+
+Or on restricted PowerShell:
+
+  npm.cmd install
+
+Start the development server:
+
+  npm run dev
+
+Or:
+
+  npm.cmd run dev
+
+Open the local URL printed by Vite, usually:
+
+  http://127.0.0.1:5173/
+
+
+10. Application Flow
+--------------------
+
+Admin:
+
+1. Login with admin email and password.
+2. Add faculty.
+3. Add subjects and assign subjects to faculty.
+4. Add students.
+5. Manage attendance records and reports.
+
+Faculty:
+
+1. Login with Faculty Login ID and password.
+2. Add attendance records for assigned subjects.
+3. View reports for assigned subjects.
+
+Student:
+
+1. Open the app.
+2. View readonly attendance reports without login.
+
+
+11. Useful Commands
+-------------------
+
+Run locally:
+
+  npm run dev
+
+Create a production build:
+
+  npm run build
+
+Preview the production build:
+
+  npm run preview
+
+Run linting:
+
+  npm run lint
