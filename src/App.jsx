@@ -4,6 +4,7 @@ import {
   BookOpen,
   CalendarCheck,
   GraduationCap,
+  Layers,
   Loader2,
   LogOut,
   Plus,
@@ -15,15 +16,16 @@ import {
 } from 'lucide-react';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 
+const today = new Date().toISOString().slice(0, 10);
 const emptyFaculty = { faculty_login_id: '', name: '', email: '', phone: '', department: '' };
-const emptySubject = { name: '', code: '', semester: '', faculty_id: '' };
-const emptyStudent = { roll_no: '', name: '', email: '', phone: '', department: '', semester: '' };
-const emptyAttendance = { student_id: '', subject_id: '', attendance_date: new Date().toISOString().slice(0, 10), status: 'present', notes: '' };
+const emptyGroup = { department: '', semester: '', section: '' };
+const emptySubject = { name: '', code: '', department: '', semester: '', faculty_id: '' };
 
 function App() {
   const [activeTab, setActiveTab] = useState('reports');
   const [session, setSession] = useState(null);
   const [userRole, setUserRole] = useState({ role: 'student', faculty_id: null, name: 'Student' });
+  const [academicGroups, setAcademicGroups] = useState([]);
   const [faculties, setFaculties] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
@@ -61,9 +63,7 @@ function App() {
     setLoading(true);
     setMessage('');
 
-    const reportQuery = supabase.from('attendance_report').select('*').order('student_name', { ascending: true });
-    const reportRes = await reportQuery;
-
+    const reportRes = await supabase.from('attendance_report').select('*').order('student_name', { ascending: true });
     if (reportRes.error) {
       setMessage(reportRes.error.message);
       setLoading(false);
@@ -77,25 +77,28 @@ function App() {
     setReport(visibleReport);
 
     if (canManage) {
-      const [facultyRes, subjectRes, studentRes, attendanceRes] = await Promise.all([
+      const [groupRes, facultyRes, subjectRes, studentRes, attendanceRes] = await Promise.all([
+        supabase.from('academic_groups').select('*').order('department').order('semester').order('section'),
         isAdmin
           ? supabase.from('faculties').select('*').order('created_at', { ascending: false })
           : supabase.from('faculties').select('*').eq('id', userRole.faculty_id),
-        supabase.from('subjects').select('*, faculties(name)').order('created_at', { ascending: false }),
-        supabase.from('students').select('*').order('created_at', { ascending: false }),
+        supabase.from('subjects').select('*, faculties(name)').order('department').order('semester').order('code'),
+        supabase.from('students').select('*').order('roll_no'),
         supabase.from('attendance_records').select('*, students(name, roll_no), subjects(name, code)').order('attendance_date', { ascending: false }),
       ]);
 
-      const firstError = [facultyRes, subjectRes, studentRes, attendanceRes].find((res) => res.error)?.error;
+      const firstError = [groupRes, facultyRes, subjectRes, studentRes, attendanceRes].find((res) => res.error)?.error;
       if (firstError) {
         setMessage(firstError.message);
       } else {
+        setAcademicGroups(groupRes.data ?? []);
         setFaculties(facultyRes.data ?? []);
         setSubjects(subjectRes.data ?? []);
         setStudents(studentRes.data ?? []);
         setAttendance(attendanceRes.data ?? []);
       }
     } else {
+      setAcademicGroups([]);
       setFaculties([]);
       setSubjects([]);
       setStudents([]);
@@ -130,15 +133,15 @@ function App() {
     const attendanceRate = attendance.length ? Math.round((presentLike / attendance.length) * 100) : 0;
 
     return [
+      { label: 'Classes', value: academicGroups.length, icon: Layers },
       { label: 'Faculty', value: faculties.length, icon: Users },
-      { label: 'Subjects', value: subjects.length, icon: BookOpen },
       { label: 'Students', value: students.length, icon: GraduationCap },
       { label: 'Attendance Rate', value: `${attendanceRate}%`, icon: CalendarCheck },
     ];
-  }, [attendance, faculties, students, subjects]);
+  }, [academicGroups, attendance, faculties, students]);
 
   const filteredReport = report.filter((row) => {
-    const haystack = `${row.student_name} ${row.roll_no} ${row.subject_name} ${row.subject_code} ${row.department} ${row.semester} ${row.faculty_name}`.toLowerCase();
+    const haystack = `${row.student_name} ${row.roll_no} ${row.subject_name} ${row.subject_code} ${row.department} ${row.semester} ${row.section} ${row.faculty_name}`.toLowerCase();
     return haystack.includes(query.toLowerCase());
   });
 
@@ -151,6 +154,7 @@ function App() {
 
   const navItems = [
     isAdmin && ['dashboard', BarChart3, 'Dashboard'],
+    isAdmin && ['groups', Layers, 'Classes'],
     isAdmin && ['faculties', Users, 'Faculty'],
     isAdmin && ['subjects', BookOpen, 'Subjects'],
     isAdmin && ['students', GraduationCap, 'Students'],
@@ -198,10 +202,13 @@ function App() {
         {message && <div className="notice error">{message}</div>}
 
         {activeTab === 'dashboard' && isAdmin && <Dashboard stats={stats} report={report} attendance={attendance} />}
+        {activeTab === 'groups' && isAdmin && <GroupSection data={academicGroups} reload={loadData} />}
         {activeTab === 'faculties' && isAdmin && <FacultySection data={faculties} reload={loadData} />}
-        {activeTab === 'subjects' && isAdmin && <SubjectSection data={subjects} faculties={faculties} reload={loadData} />}
-        {activeTab === 'students' && isAdmin && <StudentSection data={students} reload={loadData} />}
-        {activeTab === 'attendance' && canManage && <AttendanceSection data={attendance} students={students} subjects={subjects} reload={loadData} />}
+        {activeTab === 'subjects' && isAdmin && <SubjectSection data={subjects} faculties={faculties} groups={academicGroups} reload={loadData} />}
+        {activeTab === 'students' && isAdmin && <StudentSection data={students} groups={academicGroups} reload={loadData} />}
+        {activeTab === 'attendance' && canManage && (
+          <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
+        )}
         {activeTab === 'reports' && <ReportsSection data={filteredReport} query={query} setQuery={setQuery} readonly={!canManage} />}
       </section>
     </main>
@@ -321,8 +328,8 @@ function Dashboard({ stats, report, attendance }) {
       <div className="two-column">
         <Panel title="Low Attendance Watchlist">
           <SimpleTable
-            columns={['Student', 'Subject', 'Attendance']}
-            rows={lowAttendance.map((row) => [row.student_name, row.subject_code, `${row.attendance_percentage}%`])}
+            columns={['Student', 'Class', 'Attendance']}
+            rows={lowAttendance.map((row) => [row.student_name, `${row.department} Sem ${row.semester}-${row.section}`, `${row.attendance_percentage}%`])}
             empty="No students below 75% yet."
           />
         </Panel>
@@ -335,6 +342,28 @@ function Dashboard({ stats, report, attendance }) {
         </Panel>
       </div>
     </div>
+  );
+}
+
+function GroupSection({ data, reload }) {
+  return (
+    <CrudSection
+      title="Class"
+      table="academic_groups"
+      emptyForm={emptyGroup}
+      reload={reload}
+      fields={[
+        { key: 'department', label: 'Department', required: true },
+        { key: 'semester', label: 'Semester', required: true },
+        { key: 'section', label: 'Section', required: true },
+      ]}
+      columns={[
+        ['Department', (row) => row.department],
+        ['Semester', (row) => row.semester],
+        ['Section', (row) => row.section],
+      ]}
+      data={data}
+    />
   );
 }
 
@@ -364,7 +393,7 @@ function FacultySection({ data, reload }) {
   );
 }
 
-function SubjectSection({ data, faculties, reload }) {
+function SubjectSection({ data, faculties, groups, reload }) {
   return (
     <CrudSection
       title="Subjects"
@@ -374,12 +403,14 @@ function SubjectSection({ data, faculties, reload }) {
       fields={[
         { key: 'name', label: 'Subject Name', required: true },
         { key: 'code', label: 'Code', required: true },
-        { key: 'semester', label: 'Semester', required: true },
+        { key: 'department', label: 'Department', type: 'select', required: true, options: uniqueOptions(groups, 'department') },
+        { key: 'semester', label: 'Semester', type: 'select', required: true, options: uniqueOptions(groups, 'semester') },
         { key: 'faculty_id', label: 'Faculty', type: 'select', options: faculties.map((f) => ({ value: f.id, label: f.name })) },
       ]}
       columns={[
         ['Subject', (row) => row.name],
         ['Code', (row) => row.code],
+        ['Department', (row) => row.department],
         ['Semester', (row) => row.semester],
         ['Faculty', (row) => row.faculties?.name ?? '-'],
       ]}
@@ -388,56 +419,283 @@ function SubjectSection({ data, faculties, reload }) {
   );
 }
 
-function StudentSection({ data, reload }) {
+function StudentSection({ data, groups, reload }) {
+  const [groupId, setGroupId] = useState('');
+  const [bulkText, setBulkText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const selectedGroup = groups.find((group) => group.id === groupId);
+  const visibleStudents = data.filter((student) => student.group_id === groupId);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!selectedGroup) return;
+
+    const rows = bulkText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [roll_no, name, email = '', phone = ''] = line.split(',').map((item) => item.trim());
+        return {
+          roll_no,
+          name,
+          email: email || null,
+          phone: phone || null,
+          department: selectedGroup.department,
+          semester: selectedGroup.semester,
+          section: selectedGroup.section,
+          group_id: selectedGroup.id,
+        };
+      })
+      .filter((row) => row.roll_no && row.name);
+
+    if (!rows.length) return;
+
+    setSaving(true);
+    const { error } = await supabase.from('students').upsert(rows, { onConflict: 'roll_no' });
+    if (error) alert(error.message);
+    else {
+      setBulkText('');
+      await reload();
+    }
+    setSaving(false);
+  };
+
+  const remove = async (id) => {
+    const { error } = await supabase.from('students').delete().eq('id', id);
+    if (error) alert(error.message);
+    else await reload();
+  };
+
   return (
-    <CrudSection
-      title="Students"
-      table="students"
-      emptyForm={emptyStudent}
-      reload={reload}
-      fields={[
-        { key: 'roll_no', label: 'Roll No', required: true },
-        { key: 'name', label: 'Name', required: true },
-        { key: 'email', label: 'Email', type: 'email' },
-        { key: 'phone', label: 'Phone' },
-        { key: 'department', label: 'Department', required: true },
-        { key: 'semester', label: 'Semester', required: true },
-      ]}
-      columns={[
-        ['Roll No', (row) => row.roll_no],
-        ['Name', (row) => row.name],
-        ['Department', (row) => row.department],
-        ['Semester', (row) => row.semester],
-        ['Email', (row) => row.email || '-'],
-      ]}
-      data={data}
-    />
+    <div className="management-grid">
+      <Panel title="Bulk Add Students">
+        <form className="form-grid" onSubmit={submit}>
+          <GroupPicker groups={groups} value={groupId} onChange={setGroupId} />
+          <label>
+            <span>Students</span>
+            <textarea
+              value={bulkText}
+              onChange={(event) => setBulkText(event.target.value)}
+              placeholder="Roll No, Name, Email, Phone&#10;CS001, Asha Rao, asha@example.com, 9876543210"
+              required
+            />
+          </label>
+          <button className="primary-button" type="submit" disabled={saving || !groupId || !hasSupabaseConfig}>
+            {saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
+            <span>Save Students</span>
+          </button>
+        </form>
+      </Panel>
+
+      <Panel title="Students In Selected Class">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Roll No</th>
+                <th>Name</th>
+                <th>Department</th>
+                <th>Semester</th>
+                <th>Section</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleStudents.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.roll_no}</td>
+                  <td>{row.name}</td>
+                  <td>{row.department}</td>
+                  <td>{row.semester}</td>
+                  <td>{row.section}</td>
+                  <td>
+                    <button className="danger-button" type="button" onClick={() => remove(row.id)} title="Delete">
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!visibleStudents.length && (
+                <tr>
+                  <td colSpan="6" className="empty-cell">Select a class to view students.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
   );
 }
 
-function AttendanceSection({ data, students, subjects, reload }) {
+function AttendanceSection({ data, students, subjects, groups, reload }) {
+  const [filters, setFilters] = useState({ department: '', semester: '', section: '', subject_id: '', attendance_date: today });
+  const [statuses, setStatuses] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const filteredGroups = groups.filter((group) => {
+    if (filters.department && group.department !== filters.department) return false;
+    if (filters.semester && group.semester !== filters.semester) return false;
+    return true;
+  });
+  const classStudents = students.filter((student) => (
+    student.department === filters.department
+    && student.semester === filters.semester
+    && student.section === filters.section
+  ));
+  const classSubjects = subjects.filter((subject) => (
+    subject.department === filters.department
+    && subject.semester === filters.semester
+  ));
+
+  useEffect(() => {
+    const nextStatuses = {};
+    classStudents.forEach((student) => {
+      const existing = data.find((row) => (
+        row.student_id === student.id
+        && row.subject_id === filters.subject_id
+        && row.attendance_date === filters.attendance_date
+      ));
+      nextStatuses[student.id] = existing?.status === 'absent' ? 'absent' : 'present';
+    });
+    setStatuses(nextStatuses);
+  }, [classStudents, data, filters.attendance_date, filters.subject_id]);
+
+  const setFilter = (key, value) => {
+    setFilters((current) => {
+      const next = { ...current, [key]: value };
+      if (key === 'department') {
+        next.semester = '';
+        next.section = '';
+        next.subject_id = '';
+      }
+      if (key === 'semester') {
+        next.section = '';
+        next.subject_id = '';
+      }
+      return next;
+    });
+  };
+
+  const mark = (studentId, status) => {
+    setStatuses((current) => ({ ...current, [studentId]: status }));
+  };
+
+  const saveAttendance = async (event) => {
+    event.preventDefault();
+    const records = classStudents.map((student) => ({
+      student_id: student.id,
+      subject_id: filters.subject_id,
+      attendance_date: filters.attendance_date,
+      status: statuses[student.id] ?? 'present',
+    }));
+
+    if (!records.length) return;
+
+    setSaving(true);
+    const { error } = await supabase
+      .from('attendance_records')
+      .upsert(records, { onConflict: 'student_id,subject_id,attendance_date' });
+
+    if (error) alert(error.message);
+    else await reload();
+    setSaving(false);
+  };
+
   return (
-    <CrudSection
-      title="Attendance Records"
-      table="attendance_records"
-      emptyForm={emptyAttendance}
-      reload={reload}
-      fields={[
-        { key: 'student_id', label: 'Student', type: 'select', required: true, options: students.map((s) => ({ value: s.id, label: `${s.roll_no} - ${s.name}` })) },
-        { key: 'subject_id', label: 'Subject', type: 'select', required: true, options: subjects.map((s) => ({ value: s.id, label: `${s.code} - ${s.name}` })) },
-        { key: 'attendance_date', label: 'Date', type: 'date', required: true },
-        { key: 'status', label: 'Status', type: 'select', required: true, options: ['present', 'absent', 'late'].map((status) => ({ value: status, label: status })) },
-        { key: 'notes', label: 'Notes' },
-      ]}
-      columns={[
-        ['Date', (row) => row.attendance_date],
-        ['Student', (row) => row.students ? `${row.students.roll_no} - ${row.students.name}` : '-'],
-        ['Subject', (row) => row.subjects ? `${row.subjects.code} - ${row.subjects.name}` : '-'],
-        ['Status', (row) => <StatusPill status={row.status} />],
-        ['Notes', (row) => row.notes || '-'],
-      ]}
-      data={data}
-    />
+    <div className="stack">
+      <Panel title="Select Class">
+        <form className="filter-grid" onSubmit={saveAttendance}>
+          <label>
+            <span>Department</span>
+            <select required value={filters.department} onChange={(event) => setFilter('department', event.target.value)}>
+              <option value="">Select Department</option>
+              {uniqueOptions(groups, 'department').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Semester</span>
+            <select required value={filters.semester} onChange={(event) => setFilter('semester', event.target.value)}>
+              <option value="">Select Semester</option>
+              {uniqueOptions(groups.filter((group) => group.department === filters.department), 'semester').map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Section</span>
+            <select required value={filters.section} onChange={(event) => setFilter('section', event.target.value)}>
+              <option value="">Select Section</option>
+              {uniqueOptions(filteredGroups.filter((group) => group.semester === filters.semester), 'section').map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Subject</span>
+            <select required value={filters.subject_id} onChange={(event) => setFilter('subject_id', event.target.value)}>
+              <option value="">Select Subject</option>
+              {classSubjects.map((subject) => (
+                <option key={subject.id} value={subject.id}>{subject.code} - {subject.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Date</span>
+            <input type="date" value={filters.attendance_date} onChange={(event) => setFilter('attendance_date', event.target.value)} required />
+          </label>
+          <button className="primary-button" type="submit" disabled={saving || !filters.subject_id || !classStudents.length}>
+            {saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
+            <span>Save Attendance</span>
+          </button>
+        </form>
+      </Panel>
+
+      <Panel title="Mark Attendance">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Roll No</th>
+                <th>Student</th>
+                <th>Present</th>
+                <th>Absent</th>
+              </tr>
+            </thead>
+            <tbody>
+              {classStudents.map((student) => (
+                <tr key={student.id}>
+                  <td>{student.roll_no}</td>
+                  <td>{student.name}</td>
+                  <td>
+                    <input
+                      className="mark-check"
+                      type="checkbox"
+                      checked={(statuses[student.id] ?? 'present') === 'present'}
+                      onChange={() => mark(student.id, 'present')}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="mark-check"
+                      type="checkbox"
+                      checked={statuses[student.id] === 'absent'}
+                      onChange={() => mark(student.id, 'absent')}
+                    />
+                  </td>
+                </tr>
+              ))}
+              {!classStudents.length && (
+                <tr>
+                  <td colSpan="4" className="empty-cell">Select department, semester, and section to load students.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
   );
 }
 
@@ -533,7 +791,7 @@ function ReportsSection({ data, query, setQuery, readonly }) {
     <Panel title={readonly ? 'Public Attendance Reports' : 'Attendance Reports'}>
       <div className="search-row">
         <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student, roll no, subject, faculty, department..." />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student, roll no, class, subject, faculty..." />
       </div>
       <div className="table-wrap">
         <table>
@@ -541,6 +799,7 @@ function ReportsSection({ data, query, setQuery, readonly }) {
             <tr>
               <th>Roll No</th>
               <th>Student</th>
+              <th>Class</th>
               <th>Subject</th>
               <th>Faculty</th>
               <th>Total</th>
@@ -555,6 +814,7 @@ function ReportsSection({ data, query, setQuery, readonly }) {
               <tr key={`${row.student_id}-${row.subject_id}`}>
                 <td>{row.roll_no}</td>
                 <td>{row.student_name}</td>
+                <td>{row.department} Sem {row.semester}-{row.section}</td>
                 <td>{row.subject_code} - {row.subject_name}</td>
                 <td>{row.faculty_name || '-'}</td>
                 <td>{row.total_classes}</td>
@@ -566,13 +826,29 @@ function ReportsSection({ data, query, setQuery, readonly }) {
             ))}
             {!data.length && (
               <tr>
-                <td colSpan="9" className="empty-cell">No report data found.</td>
+                <td colSpan="10" className="empty-cell">No report data found.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
     </Panel>
+  );
+}
+
+function GroupPicker({ groups, value, onChange }) {
+  return (
+    <label>
+      <span>Department / Semester / Section</span>
+      <select required value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Select Class</option>
+        {groups.map((group) => (
+          <option key={group.id} value={group.id}>
+            {group.department} - Semester {group.semester} - Section {group.section}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -612,8 +888,10 @@ function SimpleTable({ columns, rows, empty }) {
   );
 }
 
-function StatusPill({ status }) {
-  return <span className={`status-pill ${status}`}>{status}</span>;
+function uniqueOptions(rows, key) {
+  return [...new Set(rows.map((row) => row[key]).filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+    .map((value) => ({ value, label: value }));
 }
 
 function roleLabel(role) {
@@ -625,10 +903,11 @@ function roleLabel(role) {
 function titleFor(tab) {
   const titles = {
     dashboard: 'Dashboard',
+    groups: 'Manage Classes',
     faculties: 'Manage Faculty',
     subjects: 'Manage Subjects',
-    students: 'Manage Students',
-    attendance: 'Attendance Records',
+    students: 'Bulk Students',
+    attendance: 'Class Attendance',
     reports: 'Reports',
   };
   return titles[tab] ?? 'Reports';

@@ -15,7 +15,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -301,13 +302,32 @@ label span {
 }
 
 input,
-select {
+select,
+textarea {
   background: #fbfdff;
   border: 1px solid #cfdbe7;
   border-radius: 8px;
   min-height: 40px;
   padding: 9px 10px;
   width: 100%;
+}
+
+textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
+.filter-grid {
+  align-items: end;
+  display: grid;
+  gap: 13px;
+  grid-template-columns: repeat(5, minmax(140px, 1fr)) auto;
+}
+
+.mark-check {
+  height: 18px;
+  min-height: 18px;
+  width: 18px;
 }
 
 .search-row {
@@ -416,7 +436,8 @@ td {
 
   .stats-grid,
   .two-column,
-  .management-grid {
+  .management-grid,
+  .filter-grid {
     grid-template-columns: 1fr;
   }
 }

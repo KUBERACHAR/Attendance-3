@@ -51,6 +51,7 @@ happens, use npm.cmd instead of npm:
 The SQL creates:
 
 - admin_users
+- academic_groups
 - faculties
 - subjects
 - students
@@ -176,16 +177,25 @@ Open the local URL printed by Vite, usually:
 Admin:
 
 1. Login with admin email and password.
-2. Add faculty.
-3. Add subjects and assign subjects to faculty.
-4. Add students.
-5. Manage attendance records and reports.
+2. Open Classes and create department, semester, and section combinations.
+3. Add faculty.
+4. Add subjects with department, semester, and assigned faculty.
+5. Open Students, select a class, and paste multiple students.
+6. Manage attendance records and reports.
+
+Bulk student format:
+
+  Roll No, Name, Email, Phone
+  CS001, Asha Rao, asha@example.com, 9876543210
+  CS002, Ravi Kumar, ravi@example.com, 9876543211
 
 Faculty:
 
 1. Login with Faculty Login ID and password.
-2. Add attendance records for assigned subjects.
-3. View reports for assigned subjects.
+2. Select Department, Semester, Section, Subject, and Date.
+3. Mark each listed student as Present or Absent.
+4. Save attendance for the whole class.
+5. View reports for assigned subjects.
 
 Student:
 

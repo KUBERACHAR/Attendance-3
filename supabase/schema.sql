@@ -6,6 +6,15 @@ create table if not exists public.admin_users (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.academic_groups (
+  id uuid primary key default gen_random_uuid(),
+  department text not null,
+  semester text not null,
+  section text not null,
+  created_at timestamptz not null default now(),
+  unique (department, semester, section)
+);
+
 create table if not exists public.faculties (
   id uuid primary key default gen_random_uuid(),
   faculty_login_id text not null unique,
@@ -21,6 +30,7 @@ create table if not exists public.subjects (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   code text not null unique,
+  department text not null,
   semester text not null,
   faculty_id uuid references public.faculties(id) on delete set null,
   created_at timestamptz not null default now()
@@ -34,6 +44,8 @@ create table if not exists public.students (
   phone text,
   department text not null,
   semester text not null,
+  section text not null default 'A',
+  group_id uuid references public.academic_groups(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -50,8 +62,12 @@ create table if not exists public.attendance_records (
 
 alter table public.faculties add column if not exists faculty_login_id text;
 alter table public.faculties add column if not exists is_active boolean not null default true;
+alter table public.subjects add column if not exists department text not null default 'General';
+alter table public.students add column if not exists section text not null default 'A';
+alter table public.students add column if not exists group_id uuid references public.academic_groups(id) on delete set null;
 
 create unique index if not exists faculties_faculty_login_id_key on public.faculties(faculty_login_id);
+create unique index if not exists academic_groups_unique_key on public.academic_groups(department, semester, section);
 
 create or replace function public.current_user_email()
 returns text
@@ -146,6 +162,8 @@ select
   s.name as student_name,
   s.department,
   s.semester,
+  s.section,
+  s.group_id,
   sub.id as subject_id,
   sub.name as subject_name,
   sub.code as subject_code,
@@ -160,18 +178,23 @@ select
     else round(((count(ar.id) filter (where ar.status in ('present', 'late'))::numeric / count(ar.id)::numeric) * 100), 2)
   end as attendance_percentage
 from public.students s
-cross join public.subjects sub
+join public.subjects sub
+  on sub.department = s.department
+ and sub.semester = s.semester
 left join public.faculties f on f.id = sub.faculty_id
 left join public.attendance_records ar on ar.student_id = s.id and ar.subject_id = sub.id
 group by s.id, sub.id, f.name;
 
 alter table public.admin_users enable row level security;
+alter table public.academic_groups enable row level security;
 alter table public.faculties enable row level security;
 alter table public.subjects enable row level security;
 alter table public.students enable row level security;
 alter table public.attendance_records enable row level security;
 
 drop policy if exists "Admins manage admin users" on public.admin_users;
+drop policy if exists "Admins manage academic groups" on public.academic_groups;
+drop policy if exists "Faculty can read academic groups" on public.academic_groups;
 drop policy if exists "Admins manage faculties" on public.faculties;
 drop policy if exists "Faculty can read own profile" on public.faculties;
 drop policy if exists "Admins manage subjects" on public.subjects;
@@ -203,6 +226,12 @@ drop policy if exists "Allow anon delete attendance" on public.attendance_record
 
 create policy "Admins manage admin users" on public.admin_users
 for all using (public.is_admin()) with check (public.is_admin());
+
+create policy "Admins manage academic groups" on public.academic_groups
+for all using (public.is_admin()) with check (public.is_admin());
+
+create policy "Faculty can read academic groups" on public.academic_groups
+for select using (public.current_faculty_id() is not null);
 
 create policy "Admins manage faculties" on public.faculties
 for all using (public.is_admin()) with check (public.is_admin());
