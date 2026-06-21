@@ -34,6 +34,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isAdmin = userRole.role === 'admin';
   const isFaculty = userRole.role === 'faculty';
@@ -184,9 +185,20 @@ function App() {
 
       <section className="content">
         <header className="topbar">
-          <div>
-            <p>Attendance Management System</p>
-            <h1>{titleFor(activeTab)}</h1>
+          <div className="topbar-left">
+            <button
+              className={mobileMenuOpen ? 'mobile-menu-button active' : 'mobile-menu-button'}
+              type="button"
+              onClick={() => setMobileMenuOpen((value) => !value)}
+              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileMenuOpen}
+            >
+              <span />
+            </button>
+            <div>
+              <p>Attendance Management System</p>
+              <h1>{titleFor(activeTab)}</h1>
+            </div>
           </div>
           <button className="icon-button" type="button" onClick={loadData} disabled={loading} title="Refresh data">
             {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
@@ -210,6 +222,41 @@ function App() {
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
         )}
         {activeTab === 'reports' && <ReportsSection data={filteredReport} query={query} setQuery={setQuery} readonly={!canManage} />}
+        {mobileMenuOpen && (
+          <div className="mobile-menu-drawer" role="dialog" aria-modal="true">
+            <div className="mobile-menu-drawer__content">
+              <div className="mobile-menu-drawer__header">
+                <strong>Menu</strong>
+                <button
+                  className="mobile-menu-close"
+                  type="button"
+                  onClick={() => setMobileMenuOpen(false)}
+                  aria-label="Close menu"
+                >
+                  ×
+                </button>
+              </div>
+              <nav className="nav-list mobile" aria-label="Mobile navigation">
+                {navItems.map(([id, Icon, label]) => (
+                  <NavButton
+                    key={id}
+                    id={id}
+                    activeTab={activeTab}
+                    setActiveTab={(id) => {
+                      setActiveTab(id);
+                      setMobileMenuOpen(false);
+                    }}
+                    icon={Icon}
+                    label={label}
+                  />
+                ))}
+              </nav>
+              <div className="mobile-auth-drawer">
+                <AuthPanel session={session} role={userRole} onSignedIn={resolveRole} onSignOut={signOut} />
+              </div>
+            </div>
+          </div>
+        )}
         <footer className="app-footer">
           <div className="app-footer__inner">
             <span className="app-footer-line">© 2026 Attendance. All rights reserved.</span>
