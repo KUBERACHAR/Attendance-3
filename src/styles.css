@@ -132,6 +132,9 @@ textarea {
 .content {
   min-width: 0;
   padding: 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
 }
 
 .topbar {
@@ -419,6 +422,7 @@ td {
   border-top: 1px solid #dce5ee;
   background: #ffffff;
   padding: 14px 24px;
+  margin-top: auto;
 }
 
 .app-footer__inner {
