@@ -168,7 +168,7 @@ function App() {
         <div className="brand">
           <CalendarCheck size={28} />
           <div>
-            <strong>AttendEase</strong>
+            <strong>Attendance</strong>
             <span>{roleLabel(userRole)}</span>
           </div>
         </div>
@@ -475,7 +475,7 @@ function StudentSection({ data, groups, reload }) {
 
   return (
     <div className="management-grid">
-      <Panel title="Bulk Add Students">
+      <Panel title="Add Students">
         <form className="form-grid" onSubmit={submit}>
           <GroupPicker groups={groups} value={groupId} onChange={setGroupId} />
           <label>
@@ -483,7 +483,7 @@ function StudentSection({ data, groups, reload }) {
             <textarea
               value={bulkText}
               onChange={(event) => setBulkText(event.target.value)}
-              placeholder="Roll No, Name, Email, Phone&#10;CS001, Asha Rao, asha@example.com, 9876543210"
+              placeholder="USN, Name, Email, Phone"
               required
             />
           </label>
@@ -499,7 +499,7 @@ function StudentSection({ data, groups, reload }) {
           <table>
             <thead>
               <tr>
-                <th>Roll No</th>
+                <th>USN</th>
                 <th>Name</th>
                 <th>Department</th>
                 <th>Semester</th>
@@ -663,7 +663,7 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
           <table>
             <thead>
               <tr>
-                <th>Roll No</th>
+                <th>USN</th>
                 <th>Student</th>
                 <th>Present</th>
                 <th>Absent</th>
@@ -794,16 +794,16 @@ function CrudSection({ title, table, emptyForm, fields, columns, data, reload })
 
 function ReportsSection({ data, query, setQuery, readonly }) {
   return (
-    <Panel title={readonly ? 'Public Attendance Reports' : 'Attendance Reports'}>
+    <Panel title={readonly ? 'Attendance Reports' : 'Attendance Reports'}>
       <div className="search-row">
         <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student, roll no, class, subject, faculty..." />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student, USN, class, subject, faculty..." />
       </div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Roll No</th>
+              <th>USN</th>
               <th>Student</th>
               <th>Class</th>
               <th>Subject</th>
@@ -908,7 +908,7 @@ function roleLabel(role) {
 
 function titleFor(tab) {
   const titles = {
-    dashboard: 'Dashboard',
+    dashboard: 'Admin Dashboard',
     groups: 'Manage Classes',
     faculties: 'Manage Faculty',
     subjects: 'Manage Subjects',
