@@ -210,6 +210,12 @@ function App() {
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
         )}
         {activeTab === 'reports' && <ReportsSection data={filteredReport} query={query} setQuery={setQuery} readonly={!canManage} />}
+        <footer className="app-footer">
+          <div className="app-footer__inner">
+            <span className="app-footer-line">© 2026 Attendance. All rights reserved.</span>
+            <span className="app-footer__dev">Developed by - <a href='https://kuberachar.netlify.app/' target='blank'>Kuberachar</a></span>
+          </div>
+        </footer>
       </section>
     </main>
   );
