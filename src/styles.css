@@ -212,7 +212,6 @@ textarea {
 .mobile-menu-drawer__content {
   width: min(320px, 100%);
   max-width: 320px;
-  /* background: #0f2c44; */
   background: #1d344f;
   height: 100%;
   display: flex;
@@ -226,12 +225,13 @@ textarea {
   display: flex;
   justify-content: space-between;
   margin-bottom: 18px;
+  color: #f8f7f6;
 }
 
 .mobile-menu-close {
   background: transparent;
   border: none;
-  color: #18314f;
+  color: #f6f7f8;
   cursor: pointer;
   font-size: 1.5rem;
   line-height: 1;
