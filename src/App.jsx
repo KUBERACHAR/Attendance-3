@@ -17,7 +17,7 @@ import {
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 
 const today = new Date().toISOString().slice(0, 10);
-const emptyFaculty = { faculty_login_id: '', name: '', email: '', phone: '', department: '' };
+const emptyFaculty = { faculty_login_id: '', name: '', email: '', department: '' };
 const emptyGroup = { department: '', semester: '', section: '' };
 const emptySubject = { name: '', code: '', department: '', semester: '', faculty_id: '' };
 
@@ -431,7 +431,7 @@ function FacultySection({ data, reload }) {
         { key: 'faculty_login_id', label: 'Faculty Login ID', required: true },
         { key: 'name', label: 'Name', required: true },
         { key: 'email', label: 'Email', type: 'email', required: true },
-        { key: 'phone', label: 'Phone' },
+        // { key: 'phone', label: 'Phone' },
         { key: 'department', label: 'Department', required: true },
       ]}
       columns={[
@@ -439,7 +439,7 @@ function FacultySection({ data, reload }) {
         ['Name', (row) => row.name],
         ['Email', (row) => row.email],
         ['Department', (row) => row.department],
-        ['Phone', (row) => row.phone || '-'],
+        // ['Phone', (row) => row.phone || '-'],
       ]}
       data={data}
     />
@@ -488,12 +488,12 @@ function StudentSection({ data, groups, reload }) {
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const [roll_no, name, email = '', phone = ''] = line.split(',').map((item) => item.trim());
+        const [roll_no, name] = line.split(',').map((item) => item.trim());
         return {
           roll_no,
           name,
-          email: email || null,
-          phone: phone || null,
+          // email: email || null,
+          // phone: phone || null,
           department: selectedGroup.department,
           semester: selectedGroup.semester,
           section: selectedGroup.section,
@@ -530,7 +530,7 @@ function StudentSection({ data, groups, reload }) {
             <textarea
               value={bulkText}
               onChange={(event) => setBulkText(event.target.value)}
-              placeholder="USN, Name, Email, Phone"
+              placeholder="USN, Name"
               required
             />
           </label>
@@ -959,7 +959,7 @@ function titleFor(tab) {
     groups: 'Manage Classes',
     faculties: 'Manage Faculty',
     subjects: 'Manage Subjects',
-    students: 'Bulk Students',
+    students: 'Manage Students',
     attendance: 'Class Attendance',
     reports: 'Reports',
   };

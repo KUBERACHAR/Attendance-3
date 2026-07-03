@@ -55,7 +55,6 @@ create table if not exists public.attendance_records (
   subject_id uuid not null references public.subjects(id) on delete cascade,
   attendance_date date not null default current_date,
   status text not null check (status in ('present', 'absent', 'late')),
-  notes text,
   created_at timestamptz not null default now(),
   unique (student_id, subject_id, attendance_date)
 );
