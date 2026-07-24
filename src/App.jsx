@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { read, utils } from 'xlsx';
 import {
   BarChart3,
   BookOpen,
   CalendarCheck,
+  FileSpreadsheet,
   GraduationCap,
   Layers,
   Loader2,
@@ -475,9 +477,35 @@ function SubjectSection({ data, faculties, groups, reload }) {
 function StudentSection({ data, groups, reload }) {
   const [groupId, setGroupId] = useState('');
   const [bulkText, setBulkText] = useState('');
+  const [excelRows, setExcelRows] = useState([]);
+  const [excelFileName, setExcelFileName] = useState('');
+  const [excelMessage, setExcelMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const selectedGroup = groups.find((group) => group.id === groupId);
   const visibleStudents = data.filter((student) => student.group_id === groupId);
+
+  const resetExcelUpload = () => {
+    setExcelRows([]);
+    setExcelFileName('');
+    setExcelMessage('');
+  };
+
+  const selectGroup = (nextGroupId) => {
+    setGroupId(nextGroupId);
+    resetExcelUpload();
+  };
+
+  const buildStudentRows = (rows) => rows.map(({ roll_no, name }) => ({
+    roll_no,
+    name,
+    // email: email || null,
+    // phone: phone || null,
+    department: selectedGroup.department,
+    semester: selectedGroup.semester,
+    section: selectedGroup.section,
+    group_id: selectedGroup.id,
+  }));
 
   const submit = async (event) => {
     event.preventDefault();
@@ -489,29 +517,60 @@ function StudentSection({ data, groups, reload }) {
       .filter(Boolean)
       .map((line) => {
         const [roll_no, name] = line.split(',').map((item) => item.trim());
-        return {
-          roll_no,
-          name,
-          // email: email || null,
-          // phone: phone || null,
-          department: selectedGroup.department,
-          semester: selectedGroup.semester,
-          section: selectedGroup.section,
-          group_id: selectedGroup.id,
-        };
+        return { roll_no, name };
       })
       .filter((row) => row.roll_no && row.name);
 
     if (!rows.length) return;
 
     setSaving(true);
-    const { error } = await supabase.from('students').upsert(rows, { onConflict: 'roll_no' });
+    const { error } = await supabase.from('students').upsert(buildStudentRows(rows), { onConflict: 'roll_no' });
     if (error) alert(error.message);
     else {
       setBulkText('');
       await reload();
     }
     setSaving(false);
+  };
+
+  const handleExcelFile = async (event) => {
+    const file = event.target.files?.[0];
+    resetExcelUpload();
+
+    if (!file) return;
+
+    try {
+      const workbook = read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+      const parsedRows = parseStudentRows(rows);
+
+      setExcelFileName(file.name);
+      setExcelRows(parsedRows);
+      setExcelMessage(
+        parsedRows.length
+          ? `${parsedRows.length} valid student${parsedRows.length === 1 ? '' : 's'} ready to upload.`
+          : 'No valid students found. The file must contain USN and Name columns.'
+      );
+    } catch (error) {
+      setExcelMessage(error.message || 'Unable to read this Excel file.');
+    }
+  };
+
+  const uploadExcelStudents = async () => {
+    if (!selectedGroup || !excelRows.length) return;
+
+    setUploading(true);
+    const { error } = await supabase.from('students').upsert(buildStudentRows(excelRows), { onConflict: 'roll_no' });
+    if (error) alert(error.message);
+    else {
+      setExcelRows([]);
+      setExcelFileName('');
+      setExcelMessage('Students uploaded successfully.');
+      await reload();
+    }
+    setUploading(false);
   };
 
   const remove = async (id) => {
@@ -524,7 +583,7 @@ function StudentSection({ data, groups, reload }) {
     <div className="management-grid">
       <Panel title="Add Students">
         <form className="form-grid" onSubmit={submit}>
-          <GroupPicker groups={groups} value={groupId} onChange={setGroupId} />
+          <GroupPicker groups={groups} value={groupId} onChange={selectGroup} />
           <label>
             <span>Students</span>
             <textarea
@@ -539,6 +598,25 @@ function StudentSection({ data, groups, reload }) {
             <span>Save Students</span>
           </button>
         </form>
+        {selectedGroup && (
+          <div className="upload-box">
+            <label>
+              <span>Upload Excel File</span>
+              <input type="file" accept=".xlsx,.xls" onChange={handleExcelFile} />
+            </label>
+            {excelFileName && <small className="upload-note">{excelFileName}</small>}
+            {excelMessage && <small className="upload-note">{excelMessage}</small>}
+            <button
+              className="secondary-action-button"
+              type="button"
+              disabled={uploading || !excelRows.length || !hasSupabaseConfig}
+              onClick={uploadExcelStudents}
+            >
+              {uploading ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
+              <span>Upload Excel Students</span>
+            </button>
+          </div>
+        )}
       </Panel>
 
       <Panel title="Students In Selected Class">
@@ -945,6 +1023,31 @@ function uniqueOptions(rows, key) {
   return [...new Set(rows.map((row) => row[key]).filter(Boolean))]
     .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
     .map((value) => ({ value, label: value }));
+}
+
+function parseStudentRows(rows) {
+  const normalizedRows = rows.map((row) => row.map((cell) => String(cell ?? '').trim()));
+  const headerIndex = normalizedRows.findIndex((row) => {
+    const cells = row.map(normalizeHeader);
+    return cells.some((cell) => ['usn', 'rollno', 'rollnumber'].includes(cell)) && cells.includes('name');
+  });
+  const header = headerIndex >= 0 ? normalizedRows[headerIndex].map(normalizeHeader) : [];
+  const usnIndex = headerIndex >= 0
+    ? header.findIndex((cell) => ['usn', 'rollno', 'rollnumber'].includes(cell))
+    : 0;
+  const nameIndex = headerIndex >= 0 ? header.findIndex((cell) => cell === 'name') : 1;
+  const dataRows = normalizedRows.slice(headerIndex >= 0 ? headerIndex + 1 : 0);
+
+  return dataRows
+    .map((row) => ({
+      roll_no: row[usnIndex]?.trim(),
+      name: row[nameIndex]?.trim(),
+    }))
+    .filter((row) => row.roll_no && row.name);
+}
+
+function normalizeHeader(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 function roleLabel(role) {
