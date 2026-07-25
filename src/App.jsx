@@ -935,7 +935,7 @@ function ReportsSection({ data, query, setQuery, readonly }) {
               <th>Faculty</th>
               <th>Total</th>
               <th>Present</th>
-              <th>Late</th>
+              {/* <th>Late</th> */}
               <th>Absent</th>
               <th>%</th>
             </tr>
@@ -950,14 +950,14 @@ function ReportsSection({ data, query, setQuery, readonly }) {
                 <td>{row.faculty_name || '-'}</td>
                 <td>{row.total_classes}</td>
                 <td>{row.present_count}</td>
-                <td>{row.late_count}</td>
+                {/* <td>{row.late_count}</td> */}
                 <td>{row.absent_count}</td>
                 <td><strong>{row.attendance_percentage}%</strong></td>
               </tr>
             ))}
             {!data.length && (
               <tr>
-                <td colSpan="10" className="empty-cell">No report data found.</td>
+                <td colSpan="9" className="empty-cell">No report data found.</td>
               </tr>
             )}
           </tbody>
