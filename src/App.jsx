@@ -219,9 +219,9 @@ function App() {
         {activeTab === 'faculties' && isAdmin && <FacultySection data={faculties} reload={loadData} />}
         {activeTab === 'subjects' && isAdmin && <SubjectSection data={subjects} faculties={faculties} groups={academicGroups} reload={loadData} />}
         {activeTab === 'students' && isAdmin && <StudentSection data={students} groups={academicGroups} reload={loadData} />}
-        {/* {activeTab === 'attendance' && canManage && (
+        {activeTab === 'attendance' && canManage && (
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
-        )} */}
+        )}
         {activeTab === 'reports' && <ReportsSection data={filteredReport} query={query} setQuery={setQuery} readonly={!canManage} />}
         {mobileMenuOpen && (
           <div className="mobile-menu-drawer" role="dialog" aria-modal="true">
