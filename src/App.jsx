@@ -143,11 +143,6 @@ function App() {
     ];
   }, [academicGroups, attendance, faculties, students]);
 
-  const filteredReport = report.filter((row) => {
-    const haystack = `${row.student_name} ${row.roll_no} ${row.subject_name} ${row.subject_code} ${row.department} ${row.semester} ${row.section} ${row.faculty_name}`.toLowerCase();
-    return haystack.includes(query.toLowerCase());
-  });
-
   const signOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
@@ -222,7 +217,7 @@ function App() {
         {activeTab === 'attendance' && canManage && (
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
         )}
-        {activeTab === 'reports' && <ReportsSection data={filteredReport} query={query} setQuery={setQuery} readonly={!canManage} />}
+        {activeTab === 'reports' && <ReportsSection data={report} query={query} setQuery={setQuery} readonly={!canManage} />}
         {mobileMenuOpen && (
           <div className="mobile-menu-drawer" role="dialog" aria-modal="true">
             <div className="mobile-menu-drawer__content">
@@ -664,20 +659,20 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
   const [statuses, setStatuses] = useState({});
   const [saving, setSaving] = useState(false);
 
-  const filteredGroups = groups.filter((group) => {
+  const filteredGroups = useMemo(() => groups.filter((group) => {
     if (filters.department && group.department !== filters.department) return false;
     if (filters.semester && group.semester !== filters.semester) return false;
     return true;
-  });
-  const classStudents = students.filter((student) => (
+  }), [filters.department, filters.semester, groups]);
+  const classStudents = useMemo(() => students.filter((student) => (
     student.department === filters.department
     && student.semester === filters.semester
     && student.section === filters.section
-  ));
-  const classSubjects = subjects.filter((subject) => (
+  )), [filters.department, filters.section, filters.semester, students]);
+  const classSubjects = useMemo(() => subjects.filter((subject) => (
     subject.department === filters.department
     && subject.semester === filters.semester
-  ));
+  )), [filters.department, filters.semester, subjects]);
 
   useEffect(() => {
     const nextStatuses = {};
@@ -687,7 +682,7 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
         && row.subject_id === filters.subject_id
         && row.attendance_date === filters.attendance_date
       ));
-      nextStatuses[student.id] = existing?.status === 'absent' ? 'absent' : 'present';
+      nextStatuses[student.id] = existing ? (existing.status === 'absent' ? 'absent' : 'present') : '';
     });
     setStatuses(nextStatuses);
   }, [classStudents, data, filters.attendance_date, filters.subject_id]);
@@ -714,14 +709,27 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
 
   const saveAttendance = async (event) => {
     event.preventDefault();
+    if (!filters.subject_id) {
+      alert('Select a subject before saving attendance.');
+      return;
+    }
+    if (!classStudents.length) {
+      alert('Select a class with students before saving attendance.');
+      return;
+    }
+
+    const hasUnmarkedStudents = classStudents.some((student) => !statuses[student.id]);
+    if (hasUnmarkedStudents) {
+      alert('Mark every student as present or absent before saving attendance.');
+      return;
+    }
+
     const records = classStudents.map((student) => ({
       student_id: student.id,
       subject_id: filters.subject_id,
       attendance_date: filters.attendance_date,
-      status: statuses[student.id] ?? 'present',
+      status: statuses[student.id],
     }));
-
-    if (!records.length) return;
 
     setSaving(true);
     const { error } = await supabase
@@ -775,7 +783,7 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
             <span>Date</span>
             <input type="date" value={filters.attendance_date} onChange={(event) => setFilter('attendance_date', event.target.value)} required />
           </label>
-          <button className="primary-button" type="submit" disabled={saving || !filters.subject_id || !classStudents.length}>
+          <button className="primary-button" type="submit" disabled={saving}>
             {saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
             <span>Save Attendance</span>
           </button>
@@ -802,7 +810,7 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
                     <input
                       className="mark-check"
                       type="checkbox"
-                      checked={(statuses[student.id] ?? 'present') === 'present'}
+                      checked={statuses[student.id] === 'present'}
                       onChange={() => mark(student.id, 'present')}
                     />
                   </td>
@@ -917,11 +925,82 @@ function CrudSection({ title, table, emptyForm, fields, columns, data, reload })
 }
 
 function ReportsSection({ data, query, setQuery, readonly }) {
+  const [filters, setFilters] = useState({ department: '', semester: '', section: '', subject_id: '' });
+  const filteredSemesters = data.filter((row) => row.department === filters.department);
+  const filteredSections = filteredSemesters.filter((row) => row.semester === filters.semester);
+  const filteredSubjects = filteredSections
+    .filter((row) => row.section === filters.section)
+    .filter((row, index, rows) => rows.findIndex((item) => item.subject_id === row.subject_id) === index)
+    .sort((a, b) => String(a.subject_code).localeCompare(String(b.subject_code), undefined, { numeric: true }));
+  const hasReportSelection = filters.department && filters.semester && filters.section && filters.subject_id;
+  const visibleRows = hasReportSelection
+    ? data.filter((row) => (
+      row.department === filters.department
+      && row.semester === filters.semester
+      && row.section === filters.section
+      && row.subject_id === filters.subject_id
+    )).filter((row) => {
+      const haystack = `${row.student_name} ${row.roll_no} ${row.subject_name} ${row.subject_code} ${row.department} ${row.semester} ${row.section} ${row.faculty_name}`.toLowerCase();
+      return haystack.includes(query.toLowerCase());
+    })
+    : [];
+
+  const setFilter = (key, value) => {
+    setFilters((current) => {
+      const next = { ...current, [key]: value };
+      if (key === 'department') {
+        next.semester = '';
+        next.section = '';
+        next.subject_id = '';
+      }
+      if (key === 'semester') {
+        next.section = '';
+        next.subject_id = '';
+      }
+      if (key === 'section') {
+        next.subject_id = '';
+      }
+      return next;
+    });
+  };
+
   return (
     <Panel title={readonly ? 'Attendance Reports' : 'Attendance Reports'}>
+      <div className="filter-grid">
+        <label>
+          <span>Department</span>
+          <select required value={filters.department} onChange={(event) => setFilter('department', event.target.value)}>
+            <option value="">Select Department</option>
+            {uniqueOptions(data, 'department').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Semester</span>
+          <select required value={filters.semester} onChange={(event) => setFilter('semester', event.target.value)}>
+            <option value="">Select Semester</option>
+            {uniqueOptions(filteredSemesters, 'semester').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Section</span>
+          <select required value={filters.section} onChange={(event) => setFilter('section', event.target.value)}>
+            <option value="">Select Section</option>
+            {uniqueOptions(filteredSections, 'section').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Subject</span>
+          <select required value={filters.subject_id} onChange={(event) => setFilter('subject_id', event.target.value)}>
+            <option value="">Select Subject</option>
+            {filteredSubjects.map((subject) => (
+              <option key={subject.subject_id} value={subject.subject_id}>{subject.subject_code} - {subject.subject_name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <div className="search-row">
         <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student, USN, class, subject, faculty..." />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student or USN..." disabled={!hasReportSelection} />
       </div>
       <div className="table-wrap">
         <table>
@@ -940,7 +1019,7 @@ function ReportsSection({ data, query, setQuery, readonly }) {
             </tr>
           </thead>
           <tbody>
-            {data.map((row) => (
+            {visibleRows.map((row) => (
               <tr key={`${row.student_id}-${row.subject_id}`}>
                 <td>{row.roll_no}</td>
                 <td>{row.student_name}</td>
@@ -954,7 +1033,12 @@ function ReportsSection({ data, query, setQuery, readonly }) {
                 <td><strong>{row.attendance_percentage}%</strong></td>
               </tr>
             ))}
-            {!data.length && (
+            {!hasReportSelection && (
+              <tr>
+                <td colSpan="9" className="empty-cell">Select department, semester, section, and subject to load report data.</td>
+              </tr>
+            )}
+            {hasReportSelection && !visibleRows.length && (
               <tr>
                 <td colSpan="9" className="empty-cell">No report data found.</td>
               </tr>
