@@ -139,7 +139,7 @@ function App() {
       { label: 'Classes', value: academicGroups.length, icon: Layers },
       { label: 'Faculty', value: faculties.length, icon: Users },
       { label: 'Students', value: students.length, icon: GraduationCap },
-      { label: 'Attendance Rate', value: `${attendanceRate}%`, icon: CalendarCheck },
+      // { label: 'Attendance Rate', value: `${attendanceRate}%`, icon: CalendarCheck },
     ];
   }, [academicGroups, attendance, faculties, students]);
 
@@ -374,7 +374,7 @@ function Dashboard({ stats, report, attendance }) {
           </div>
         ))}
       </div>
-      <div className="two-column">
+      {/* <div className="two-column">
         <Panel title="Low Attendance Watchlist">
           <SimpleTable
             columns={['Student', 'Class', 'Attendance']}
@@ -389,7 +389,7 @@ function Dashboard({ stats, report, attendance }) {
             empty="No attendance records yet."
           />
         </Panel>
-      </div>
+      </div> */}
     </div>
   );
 }
