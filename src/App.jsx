@@ -707,6 +707,14 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
     setStatuses((current) => ({ ...current, [studentId]: status }));
   };
 
+  const markAllPresent = () => {
+    const nextStatuses = {};
+    classStudents.forEach((student) => {
+      nextStatuses[student.id] = 'present';
+    });
+    setStatuses(nextStatuses);
+  };
+
   const saveAttendance = async (event) => {
     event.preventDefault();
     if (!filters.subject_id) {
@@ -737,7 +745,10 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
       .upsert(records, { onConflict: 'student_id,subject_id,attendance_date' });
 
     if (error) alert(error.message);
-    else await reload();
+    else {
+      await reload();
+      alert('Attendance saved successfully.');
+    }
     setSaving(false);
   };
 
@@ -783,6 +794,10 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
             <span>Date</span>
             <input type="date" value={filters.attendance_date} onChange={(event) => setFilter('attendance_date', event.target.value)} required />
           </label>
+          <button className="secondary-action-button" type="button" onClick={markAllPresent} disabled={saving || !classStudents.length}>
+            <CalendarCheck size={17} />
+            <span>All Present</span>
+          </button>
           <button className="primary-button" type="submit" disabled={saving}>
             {saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
             <span>Save Attendance</span>
