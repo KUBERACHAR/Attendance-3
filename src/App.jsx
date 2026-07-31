@@ -21,7 +21,7 @@ import { hasSupabaseConfig, supabase } from './lib/supabase';
 const today = new Date().toISOString().slice(0, 10);
 const emptyFaculty = { faculty_login_id: '', name: '', email: '', department: '' };
 const emptyGroup = { department: '', semester: '', section: '' };
-const emptySubject = { name: '', code: '', department: '', semester: '', faculty_id: '' };
+const emptySubject = { name: '', code: '', class_id: '', faculty_id: '' };
 
 function App() {
   const [activeTab, setActiveTab] = useState('reports');
@@ -449,11 +449,32 @@ function SubjectSection({ data, faculties, groups, reload }) {
       table="subjects"
       emptyForm={emptySubject}
       reload={reload}
+      transformPayload={(form) => {
+        const selectedGroup = groups.find((group) => group.id === form.class_id);
+        if (!selectedGroup) return null;
+
+        return {
+          name: form.name,
+          code: form.code,
+          department: selectedGroup.department,
+          semester: selectedGroup.semester,
+          section: selectedGroup.section,
+          faculty_id: form.faculty_id,
+        };
+      }}
       fields={[
         { key: 'name', label: 'Subject Name', required: true },
         { key: 'code', label: 'Code', required: true },
-        { key: 'department', label: 'Department', type: 'select', required: true, options: uniqueOptions(groups, 'department') },
-        { key: 'semester', label: 'Semester', type: 'select', required: true, options: uniqueOptions(groups, 'semester') },
+        {
+          key: 'class_id',
+          label: 'Class',
+          type: 'select',
+          required: true,
+          options: groups.map((group) => ({
+            value: group.id,
+            label: `${group.department} - Semester ${group.semester} - Section ${group.section}`,
+          })),
+        },
         { key: 'faculty_id', label: 'Faculty', type: 'select', options: faculties.map((f) => ({ value: f.id, label: f.name })) },
       ]}
       columns={[
@@ -461,6 +482,7 @@ function SubjectSection({ data, faculties, groups, reload }) {
         ['Code', (row) => row.code],
         ['Department', (row) => row.department],
         ['Semester', (row) => row.semester],
+        ['Section', (row) => row.section ?? '-'],
         ['Faculty', (row) => row.faculties?.name ?? '-'],
       ]}
       data={data}
@@ -852,14 +874,20 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
   );
 }
 
-function CrudSection({ title, table, emptyForm, fields, columns, data, reload }) {
+function CrudSection({ title, table, emptyForm, fields, columns, data, reload, transformPayload }) {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
     setSaving(true);
-    const payload = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value === '' ? null : value]));
+    const normalizedForm = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value === '' ? null : value]));
+    const payload = transformPayload ? transformPayload(normalizedForm) : normalizedForm;
+    if (!payload) {
+      alert('Select an existing class before saving.');
+      setSaving(false);
+      return;
+    }
     const { error } = await supabase.from(table).insert(payload);
     if (error) alert(error.message);
     else {

@@ -32,6 +32,7 @@ create table if not exists public.subjects (
   code text not null unique,
   department text not null,
   semester text not null,
+  section text not null,
   faculty_id uuid references public.faculties(id) on delete set null,
   created_at timestamptz not null default now()
 );
@@ -61,6 +62,7 @@ create table if not exists public.attendance_records (
 alter table public.faculties add column if not exists faculty_login_id text;
 alter table public.faculties add column if not exists is_active boolean not null default true;
 alter table public.subjects add column if not exists department text not null default 'General';
+alter table public.subjects add column if not exists section text;
 alter table public.students add column if not exists section text not null default 'A';
 alter table public.students add column if not exists group_id uuid references public.academic_groups(id) on delete set null;
 
