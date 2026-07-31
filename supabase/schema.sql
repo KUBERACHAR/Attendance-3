@@ -197,6 +197,17 @@ left join public.attendance_records ar
  and ar.subject_id = sub.id
 group by s.id, sub.id, f.name;
 
+create or replace view public.attendance_calendar as
+select
+  ar.student_id,
+  ar.subject_id,
+  sub.faculty_id,
+  ar.attendance_date,
+  ar.status
+from public.attendance_records ar
+join public.subjects sub
+  on sub.id = ar.subject_id;
+
 alter table public.admin_users enable row level security;
 alter table public.academic_groups enable row level security;
 alter table public.faculties enable row level security;
@@ -319,3 +330,4 @@ using (public.is_faculty_for_subject(subject_id));
 grant execute on function public.get_faculty_login(text) to anon, authenticated;
 grant execute on function public.get_current_role() to authenticated;
 grant select on public.attendance_report to anon, authenticated;
+grant select on public.attendance_calendar to anon, authenticated;

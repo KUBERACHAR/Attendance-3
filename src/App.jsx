@@ -33,6 +33,7 @@ function App() {
   const [students, setStudents] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [report, setReport] = useState([]);
+  const [reportAttendance, setReportAttendance] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
@@ -66,7 +67,10 @@ function App() {
     setLoading(true);
     setMessage('');
 
-    const reportRes = await supabase.from('attendance_report').select('*').order('student_name', { ascending: true });
+    const [reportRes, reportAttendanceRes] = await Promise.all([
+      supabase.from('attendance_report').select('*').order('student_name', { ascending: true }),
+      supabase.from('attendance_calendar').select('*').order('attendance_date', { ascending: true }),
+    ]);
     if (reportRes.error) {
       setMessage(reportRes.error.message);
       setLoading(false);
@@ -76,8 +80,12 @@ function App() {
     const visibleReport = isFaculty
       ? (reportRes.data ?? []).filter((row) => row.faculty_id === userRole.faculty_id)
       : reportRes.data ?? [];
+    const visibleReportAttendance = isFaculty
+      ? (reportAttendanceRes.data ?? []).filter((row) => row.faculty_id === userRole.faculty_id)
+      : reportAttendanceRes.data ?? [];
 
     setReport(visibleReport);
+    setReportAttendance(visibleReportAttendance);
 
     if (canManage) {
       const [groupRes, facultyRes, subjectRes, studentRes, attendanceRes] = await Promise.all([
@@ -217,7 +225,9 @@ function App() {
         {activeTab === 'attendance' && canManage && (
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
         )}
-        {activeTab === 'reports' && <ReportsSection data={report} query={query} setQuery={setQuery} readonly={!canManage} />}
+        {activeTab === 'reports' && (
+          <ReportsSection data={report} attendance={reportAttendance} query={query} setQuery={setQuery} readonly={!canManage} />
+        )}
         {mobileMenuOpen && (
           <div className="mobile-menu-drawer" role="dialog" aria-modal="true">
             <div className="mobile-menu-drawer__content">
@@ -967,8 +977,16 @@ function CrudSection({ title, table, emptyForm, fields, columns, data, reload, t
   );
 }
 
-function ReportsSection({ data, query, setQuery, readonly }) {
-  const [filters, setFilters] = useState({ department: '', semester: '', section: '', subject_id: '' });
+function ReportsSection({ data, attendance, query, setQuery, readonly }) {
+  const [filters, setFilters] = useState({
+    department: '',
+    semester: '',
+    section: '',
+    subject_id: '',
+    month: today.slice(0, 7),
+  });
+  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const filteredSemesters = data.filter((row) => row.department === filters.department);
   const filteredSections = filteredSemesters.filter((row) => row.semester === filters.semester);
   const filteredSubjects = filteredSections
@@ -976,17 +994,39 @@ function ReportsSection({ data, query, setQuery, readonly }) {
     .filter((row, index, rows) => rows.findIndex((item) => item.subject_id === row.subject_id) === index)
     .sort((a, b) => String(a.subject_code).localeCompare(String(b.subject_code), undefined, { numeric: true }));
   const hasReportSelection = filters.department && filters.semester && filters.section && filters.subject_id;
-  const visibleRows = hasReportSelection
+  const eligibleStudents = hasReportSelection
     ? data.filter((row) => (
       row.department === filters.department
       && row.semester === filters.semester
       && row.section === filters.section
       && row.subject_id === filters.subject_id
-    )).filter((row) => {
-      const haystack = `${row.student_name} ${row.roll_no} ${row.subject_name} ${row.subject_code} ${row.department} ${row.semester} ${row.section} ${row.faculty_name}`.toLowerCase();
-      return haystack.includes(query.toLowerCase());
-    })
+    ))
     : [];
+  const normalizedQuery = query.trim().toLowerCase();
+  const searchTokens = normalizedQuery.split(/[^a-z0-9]+/).filter(Boolean);
+  const searchResults = normalizedQuery
+    ? eligibleStudents.filter((row) => {
+      const haystack = `${row.student_name} ${row.roll_no}`.toLowerCase();
+      return searchTokens.every((token) => haystack.includes(token));
+    }).slice(0, 8)
+    : [];
+  const selectedStudent = eligibleStudents.find((row) => row.student_id === selectedStudentId);
+  const monthlyAttendance = selectedStudent
+    ? attendance.filter((row) => (
+      row.student_id === selectedStudent.student_id
+      && row.subject_id === filters.subject_id
+      && filters.month
+      && String(row.attendance_date).startsWith(filters.month)
+    ))
+    : [];
+  const attendanceByDate = new Map(monthlyAttendance.map((row) => [row.attendance_date, row.status]));
+  const presentCount = monthlyAttendance.filter((row) => row.status === 'present').length;
+  const absentCount = monthlyAttendance.filter((row) => row.status === 'absent').length;
+  const attendancePercentage = monthlyAttendance.length
+    ? Math.round((presentCount / monthlyAttendance.length) * 100)
+    : 0;
+  const calendarDays = buildMonthCalendar(filters.month);
+  const monthLabel = formatMonthLabel(filters.month);
 
   const setFilter = (key, value) => {
     setFilters((current) => {
@@ -1005,6 +1045,12 @@ function ReportsSection({ data, query, setQuery, readonly }) {
       }
       return next;
     });
+
+    if (key !== 'month') {
+      setSelectedStudentId('');
+      setSearchOpen(false);
+      setQuery('');
+    }
   };
 
   return (
@@ -1040,55 +1086,120 @@ function ReportsSection({ data, query, setQuery, readonly }) {
             ))}
           </select>
         </label>
+        <label>
+          <span>Month</span>
+          <input type="month" required value={filters.month} onChange={(event) => setFilter('month', event.target.value)} />
+        </label>
       </div>
-      <div className="search-row">
-        <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search student or USN..." disabled={!hasReportSelection} />
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>USN</th>
-              <th>Student</th>
-              <th>Class</th>
-              <th>Subject</th>
-              <th>Faculty</th>
-              <th>Total</th>
-              <th>Present</th>
-              {/* <th>Late</th> */}
-              <th>Absent</th>
-              <th>%</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleRows.map((row) => (
-              <tr key={`${row.student_id}-${row.subject_id}`}>
-                <td>{row.roll_no}</td>
-                <td>{row.student_name}</td>
-                <td>{row.department} Sem {row.semester}-{row.section}</td>
-                <td>{row.subject_code} - {row.subject_name}</td>
-                <td>{row.faculty_name || '-'}</td>
-                <td>{row.total_classes}</td>
-                <td>{row.present_count}</td>
-                {/* <td>{row.late_count}</td> */}
-                <td>{row.absent_count}</td>
-                <td><strong>{row.attendance_percentage}%</strong></td>
-              </tr>
+      <div className="student-search">
+        <div className="search-row">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSelectedStudentId('');
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setSearchOpen(false)}
+            placeholder="Search student or USN..."
+            disabled={!hasReportSelection}
+            role="combobox"
+            aria-expanded={searchOpen && Boolean(normalizedQuery)}
+            aria-controls="student-search-results"
+          />
+        </div>
+        {searchOpen && normalizedQuery && (
+          <div className="student-search-results" id="student-search-results" role="listbox">
+            {searchResults.map((row) => (
+              <button
+                key={row.student_id}
+                type="button"
+                role="option"
+                aria-selected={row.student_id === selectedStudentId}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  setSelectedStudentId(row.student_id);
+                  setQuery(`${row.roll_no} - ${row.student_name}`);
+                  setSearchOpen(false);
+                }}
+              >
+                <strong>{row.student_name}</strong>
+                <span>{row.roll_no}</span>
+              </button>
             ))}
-            {!hasReportSelection && (
-              <tr>
-                <td colSpan="9" className="empty-cell">Select department, semester, section, and subject to load report data.</td>
-              </tr>
-            )}
-            {hasReportSelection && !visibleRows.length && (
-              <tr>
-                <td colSpan="9" className="empty-cell">No report data found.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            {!searchResults.length && <div className="student-search-empty">No matching students found.</div>}
+          </div>
+        )}
       </div>
+      {selectedStudent ? (
+        <div className="attendance-report-dashboard">
+          <div className="attendance-report-overview">
+            <div className="attendance-report-student">
+              <span>{selectedStudent.roll_no}</span>
+              <strong>{selectedStudent.student_name}</strong>
+              <small>
+                {selectedStudent.department} | Semester {selectedStudent.semester} | Section {selectedStudent.section}
+                {' | '}
+                {selectedStudent.subject_code} - {selectedStudent.subject_name}
+              </small>
+            </div>
+            <dl className="attendance-report-stats">
+              <div>
+                <dt>Present</dt>
+                <dd>{presentCount}</dd>
+              </div>
+              <div>
+                <dt>Absent</dt>
+                <dd>{absentCount}</dd>
+              </div>
+              <div>
+                <dt>Attendance</dt>
+                <dd>{attendancePercentage}%</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="attendance-calendar-header">
+            <strong>{monthLabel}</strong>
+            <div className="attendance-calendar-legend" aria-label="Attendance status legend">
+              <span><i className="present" />Present</span>
+              <span><i className="absent" />Absent</span>
+            </div>
+          </div>
+
+          <div className="attendance-calendar" role="grid" aria-label={`${selectedStudent.student_name} attendance for ${monthLabel}`}>
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+              <div className="attendance-calendar-weekday" role="columnheader" key={day}>{day}</div>
+            ))}
+            {calendarDays.map((day) => {
+              const status = day.inCurrentMonth ? attendanceByDate.get(day.dateKey) : '';
+              const statusLabel = status ? `, ${status}` : ', no attendance record';
+
+              return (
+                <div
+                  className={`attendance-calendar-day${day.inCurrentMonth ? '' : ' outside-month'}`}
+                  role="gridcell"
+                  aria-label={`${day.label}${statusLabel}`}
+                  key={day.dateKey}
+                >
+                  <span className={`attendance-calendar-date${status ? ` ${status}` : ''}`}>{day.day}</span>
+                </div>
+              );
+            })}
+          </div>
+          {!monthlyAttendance.length && (
+            <div className="attendance-calendar-empty">No attendance records for {monthLabel}.</div>
+          )}
+        </div>
+      ) : (
+        <div className="attendance-report-empty">
+          {hasReportSelection
+            ? 'Search and select a student to view the monthly attendance report.'
+            : 'Select department, semester, section, and subject to load attendance reports.'}
+        </div>
+      )}
     </Panel>
   );
 }
@@ -1149,6 +1260,37 @@ function uniqueOptions(rows, key) {
   return [...new Set(rows.map((row) => row[key]).filter(Boolean))]
     .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
     .map((value) => ({ value, label: value }));
+}
+
+function buildMonthCalendar(monthValue) {
+  const [year, month] = String(monthValue).split('-').map(Number);
+  if (!year || !month) return [];
+
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const cellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
+
+  return Array.from({ length: cellCount }, (_, index) => {
+    const date = new Date(year, month - 1, index - firstWeekday + 1);
+    const dateKey = [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
+
+    return {
+      dateKey,
+      day: date.getDate(),
+      inCurrentMonth: date.getMonth() === month - 1,
+      label: date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+    };
+  });
+}
+
+function formatMonthLabel(monthValue) {
+  const [year, month] = String(monthValue).split('-').map(Number);
+  if (!year || !month) return '';
+  return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
 function parseStudentRows(rows) {
