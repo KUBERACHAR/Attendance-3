@@ -33,7 +33,6 @@ create table if not exists public.subjects (
   department text not null,
   semester text not null,
   section text not null,
-  faculty_id uuid references public.faculties(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -108,6 +107,21 @@ as $$
   limit 1;
 $$;
 
+drop view if exists public.attendance_calendar;
+drop view if exists public.attendance_report;
+drop policy if exists "Faculty can read assigned subjects" on public.subjects;
+drop policy if exists "Faculty can read department subjects" on public.subjects;
+drop policy if exists "Faculty read assigned attendance" on public.attendance_records;
+drop policy if exists "Faculty create assigned attendance" on public.attendance_records;
+drop policy if exists "Faculty update assigned attendance" on public.attendance_records;
+drop policy if exists "Faculty delete assigned attendance" on public.attendance_records;
+drop policy if exists "Faculty read department attendance" on public.attendance_records;
+drop policy if exists "Faculty create department attendance" on public.attendance_records;
+drop policy if exists "Faculty update department attendance" on public.attendance_records;
+drop policy if exists "Faculty delete department attendance" on public.attendance_records;
+drop function if exists public.is_faculty_for_subject(uuid);
+alter table public.subjects drop column if exists faculty_id;
+
 create or replace function public.is_faculty_for_subject(subject_uuid uuid)
 returns boolean
 language sql
@@ -117,9 +131,11 @@ set search_path = public
 as $$
   select exists (
     select 1
-    from public.subjects
-    where id = subject_uuid
-      and faculty_id = public.current_faculty_id()
+    from public.subjects sub
+    join public.faculties f
+      on f.id = public.current_faculty_id()
+    where sub.id = subject_uuid
+      and sub.department = f.department
   );
 $$;
 
@@ -170,8 +186,6 @@ select
   sub.id as subject_id,
   sub.name as subject_name,
   sub.code as subject_code,
-  sub.faculty_id,
-  f.name as faculty_name,
   count(ar.id) as total_classes,
   count(ar.id) filter (where ar.status = 'present') as present_count,
   count(ar.id) filter (where ar.status = 'absent') as absent_count,
@@ -190,23 +204,18 @@ from public.students s
 join public.subjects sub
   on sub.department = s.department
  and sub.semester = s.semester
-left join public.faculties f
-  on f.id = sub.faculty_id
 left join public.attendance_records ar
   on ar.student_id = s.id
  and ar.subject_id = sub.id
-group by s.id, sub.id, f.name;
+group by s.id, sub.id;
 
 create or replace view public.attendance_calendar as
 select
   ar.student_id,
   ar.subject_id,
-  sub.faculty_id,
   ar.attendance_date,
   ar.status
-from public.attendance_records ar
-join public.subjects sub
-  on sub.id = ar.subject_id;
+from public.attendance_records ar;
 
 alter table public.admin_users enable row level security;
 alter table public.academic_groups enable row level security;
@@ -222,6 +231,7 @@ drop policy if exists "Admins manage faculties" on public.faculties;
 drop policy if exists "Faculty can read own profile" on public.faculties;
 drop policy if exists "Admins manage subjects" on public.subjects;
 drop policy if exists "Faculty can read assigned subjects" on public.subjects;
+drop policy if exists "Faculty can read department subjects" on public.subjects;
 drop policy if exists "Admins manage students" on public.students;
 drop policy if exists "Faculty can read students" on public.students;
 drop policy if exists "Admins manage attendance" on public.attendance_records;
@@ -229,6 +239,10 @@ drop policy if exists "Faculty read assigned attendance" on public.attendance_re
 drop policy if exists "Faculty create assigned attendance" on public.attendance_records;
 drop policy if exists "Faculty update assigned attendance" on public.attendance_records;
 drop policy if exists "Faculty delete assigned attendance" on public.attendance_records;
+drop policy if exists "Faculty read department attendance" on public.attendance_records;
+drop policy if exists "Faculty create department attendance" on public.attendance_records;
+drop policy if exists "Faculty update department attendance" on public.attendance_records;
+drop policy if exists "Faculty delete department attendance" on public.attendance_records;
 
 drop policy if exists "Allow anon read faculties" on public.faculties;
 drop policy if exists "Allow anon insert faculties" on public.faculties;
@@ -284,10 +298,10 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy "Faculty can read assigned subjects"
+create policy "Faculty can read department subjects"
 on public.subjects
 for select
-using (faculty_id = public.current_faculty_id());
+using (public.is_faculty_for_subject(id));
 
 create policy "Admins manage students"
 on public.students
@@ -306,23 +320,23 @@ for all
 using (public.is_admin())
 with check (public.is_admin());
 
-create policy "Faculty read assigned attendance"
+create policy "Faculty read department attendance"
 on public.attendance_records
 for select
 using (public.is_faculty_for_subject(subject_id));
 
-create policy "Faculty create assigned attendance"
+create policy "Faculty create department attendance"
 on public.attendance_records
 for insert
 with check (public.is_faculty_for_subject(subject_id));
 
-create policy "Faculty update assigned attendance"
+create policy "Faculty update department attendance"
 on public.attendance_records
 for update
 using (public.is_faculty_for_subject(subject_id))
 with check (public.is_faculty_for_subject(subject_id));
 
-create policy "Faculty delete assigned attendance"
+create policy "Faculty delete department attendance"
 on public.attendance_records
 for delete
 using (public.is_faculty_for_subject(subject_id));

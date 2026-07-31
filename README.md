@@ -12,7 +12,7 @@ A React + Supabase admin dashboard for managing faculty, subjects, students, att
 - Bulk student enrollment into a selected class
 - Faculty class attendance marking with Present/Absent checkboxes
 - Faculty management
-- Subject management with department, semester, and faculty assignment
+- Subject management for existing department, semester, and section classes
 - Attendance report with present, late, absent, total classes, and percentage
 - Low-attendance watchlist for students below 75%
 - Supabase SQL schema included
@@ -89,7 +89,7 @@ npm run preview
 The SQL schema includes Row Level Security policies:
 
 - Admin users can manage faculty, subjects, students, attendance, and reports.
-- Faculty users can manage attendance for their assigned subjects by department, semester, and section.
+- Faculty users can manage attendance for subjects in their department by semester and section.
 - Students do not log in and can only view the public readonly report view.
 
 Read `SUPABASE_SETUP_GUIDE.txt` for the complete Supabase and environment setup walkthrough.

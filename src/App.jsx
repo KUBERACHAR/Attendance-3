@@ -21,7 +21,7 @@ import { hasSupabaseConfig, supabase } from './lib/supabase';
 const today = new Date().toISOString().slice(0, 10);
 const emptyFaculty = { faculty_login_id: '', name: '', email: '', department: '' };
 const emptyGroup = { department: '', semester: '', section: '' };
-const emptySubject = { name: '', code: '', class_id: '', faculty_id: '' };
+const emptySubject = { name: '', code: '', class_id: '' };
 
 function App() {
   const [activeTab, setActiveTab] = useState('reports');
@@ -77,15 +77,8 @@ function App() {
       return;
     }
 
-    const visibleReport = isFaculty
-      ? (reportRes.data ?? []).filter((row) => row.faculty_id === userRole.faculty_id)
-      : reportRes.data ?? [];
-    const visibleReportAttendance = isFaculty
-      ? (reportAttendanceRes.data ?? []).filter((row) => row.faculty_id === userRole.faculty_id)
-      : reportAttendanceRes.data ?? [];
-
-    setReport(visibleReport);
-    setReportAttendance(visibleReportAttendance);
+    setReport(reportRes.data ?? []);
+    setReportAttendance(reportAttendanceRes.data ?? []);
 
     if (canManage) {
       const [groupRes, facultyRes, subjectRes, studentRes, attendanceRes] = await Promise.all([
@@ -93,7 +86,7 @@ function App() {
         isAdmin
           ? supabase.from('faculties').select('*').order('created_at', { ascending: false })
           : supabase.from('faculties').select('*').eq('id', userRole.faculty_id),
-        supabase.from('subjects').select('*, faculties(name)').order('department').order('semester').order('code'),
+        supabase.from('subjects').select('*').order('department').order('semester').order('code'),
         supabase.from('students').select('*').order('roll_no'),
         supabase.from('attendance_records').select('*, students(name, roll_no), subjects(name, code)').order('attendance_date', { ascending: false }),
       ]);
@@ -117,7 +110,7 @@ function App() {
     }
 
     setLoading(false);
-  }, [canManage, isAdmin, isFaculty, userRole.faculty_id]);
+  }, [canManage, isAdmin, userRole.faculty_id]);
 
   useEffect(() => {
     if (!hasSupabaseConfig) return undefined;
@@ -220,7 +213,7 @@ function App() {
         {activeTab === 'dashboard' && isAdmin && <Dashboard stats={stats} report={report} attendance={attendance} />}
         {activeTab === 'groups' && isAdmin && <GroupSection data={academicGroups} reload={loadData} />}
         {activeTab === 'faculties' && isAdmin && <FacultySection data={faculties} reload={loadData} />}
-        {activeTab === 'subjects' && isAdmin && <SubjectSection data={subjects} faculties={faculties} groups={academicGroups} reload={loadData} />}
+        {activeTab === 'subjects' && isAdmin && <SubjectSection data={subjects} groups={academicGroups} reload={loadData} />}
         {activeTab === 'students' && isAdmin && <StudentSection data={students} groups={academicGroups} reload={loadData} />}
         {activeTab === 'attendance' && canManage && (
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
@@ -452,7 +445,7 @@ function FacultySection({ data, reload }) {
   );
 }
 
-function SubjectSection({ data, faculties, groups, reload }) {
+function SubjectSection({ data, groups, reload }) {
   return (
     <CrudSection
       title="Subjects"
@@ -469,7 +462,6 @@ function SubjectSection({ data, faculties, groups, reload }) {
           department: selectedGroup.department,
           semester: selectedGroup.semester,
           section: selectedGroup.section,
-          faculty_id: form.faculty_id,
         };
       }}
       fields={[
@@ -485,7 +477,6 @@ function SubjectSection({ data, faculties, groups, reload }) {
             label: `${group.department} - Semester ${group.semester} - Section ${group.section}`,
           })),
         },
-        { key: 'faculty_id', label: 'Faculty', type: 'select', options: faculties.map((f) => ({ value: f.id, label: f.name })) },
       ]}
       columns={[
         ['Subject', (row) => row.name],
@@ -493,7 +484,6 @@ function SubjectSection({ data, faculties, groups, reload }) {
         ['Department', (row) => row.department],
         ['Semester', (row) => row.semester],
         ['Section', (row) => row.section ?? '-'],
-        ['Faculty', (row) => row.faculties?.name ?? '-'],
       ]}
       data={data}
     />
