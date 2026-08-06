@@ -459,6 +459,7 @@ function SubjectSection({ data, groups, reload }) {
         return {
           name: form.name,
           code: form.code,
+          group_id: selectedGroup.id,
           department: selectedGroup.department,
           semester: selectedGroup.semester,
           section: selectedGroup.section,
@@ -540,7 +541,7 @@ function StudentSection({ data, groups, reload }) {
     if (!rows.length) return;
 
     setSaving(true);
-    const { error } = await supabase.from('students').upsert(buildStudentRows(rows), { onConflict: 'roll_no' });
+    const { error } = await supabase.from('students').upsert(buildStudentRows(rows), { onConflict: 'group_id,roll_no' });
     if (error) alert(error.message);
     else {
       setBulkText('');
@@ -578,7 +579,7 @@ function StudentSection({ data, groups, reload }) {
     if (!selectedGroup || !excelRows.length) return;
 
     setUploading(true);
-    const { error } = await supabase.from('students').upsert(buildStudentRows(excelRows), { onConflict: 'roll_no' });
+    const { error } = await supabase.from('students').upsert(buildStudentRows(excelRows), { onConflict: 'group_id,roll_no' });
     if (error) alert(error.message);
     else {
       setExcelRows([]);
@@ -589,8 +590,8 @@ function StudentSection({ data, groups, reload }) {
     setUploading(false);
   };
 
-  const remove = async (id) => {
-    const { error } = await supabase.from('students').delete().eq('id', id);
+  const remove = async (id, studentGroupId) => {
+    const { error } = await supabase.from('students').delete().eq('group_id', studentGroupId).eq('id', id);
     if (error) alert(error.message);
     else await reload();
   };
@@ -657,7 +658,7 @@ function StudentSection({ data, groups, reload }) {
                   <td>{row.semester}</td>
                   <td>{row.section}</td>
                   <td>
-                    <button className="danger-button" type="button" onClick={() => remove(row.id)} title="Delete">
+                    <button className="danger-button" type="button" onClick={() => remove(row.id, row.group_id)} title="Delete">
                       <Trash2 size={16} />
                     </button>
                   </td>
@@ -686,15 +687,20 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
     if (filters.semester && group.semester !== filters.semester) return false;
     return true;
   }), [filters.department, filters.semester, groups]);
-  const classStudents = useMemo(() => students.filter((student) => (
-    student.department === filters.department
-    && student.semester === filters.semester
-    && student.section === filters.section
-  )), [filters.department, filters.section, filters.semester, students]);
-  const classSubjects = useMemo(() => subjects.filter((subject) => (
-    subject.department === filters.department
-    && subject.semester === filters.semester
-  )), [filters.department, filters.semester, subjects]);
+  const selectedGroup = useMemo(() => groups.find((group) => (
+    group.department === filters.department
+    && group.semester === filters.semester
+    && group.section === filters.section
+  )), [filters.department, filters.section, filters.semester, groups]);
+  const selectedGroupId = selectedGroup?.id ?? '';
+  const classStudents = useMemo(
+    () => students.filter((student) => student.group_id === selectedGroupId),
+    [selectedGroupId, students]
+  );
+  const classSubjects = useMemo(
+    () => subjects.filter((subject) => subject.group_id === selectedGroupId),
+    [selectedGroupId, subjects]
+  );
 
   useEffect(() => {
     const nextStatuses = {};
@@ -719,6 +725,9 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
       }
       if (key === 'semester') {
         next.section = '';
+        next.subject_id = '';
+      }
+      if (key === 'section') {
         next.subject_id = '';
       }
       return next;
@@ -755,6 +764,7 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
     }
 
     const records = classStudents.map((student) => ({
+      group_id: student.group_id,
       student_id: student.id,
       subject_id: filters.subject_id,
       attendance_date: filters.attendance_date,
@@ -764,7 +774,7 @@ function AttendanceSection({ data, students, subjects, groups, reload }) {
     setSaving(true);
     const { error } = await supabase
       .from('attendance_records')
-      .upsert(records, { onConflict: 'student_id,subject_id,attendance_date' });
+      .upsert(records, { onConflict: 'group_id,student_id,subject_id,attendance_date' });
 
     if (error) alert(error.message);
     else {

@@ -9,6 +9,7 @@ A React + Supabase admin dashboard for managing faculty, subjects, students, att
 - Faculty login with admin-created Faculty Login ID
 - Public readonly student attendance reports without login
 - Department, semester, and section class setup
+- Automatic per-class student and attendance table partitions
 - Bulk student enrollment into a selected class
 - Faculty class attendance marking with Present/Absent checkboxes
 - Faculty management
@@ -28,6 +29,8 @@ A React + Supabase admin dashboard for managing faculty, subjects, students, att
 +-- package.json
 +-- supabase
 |   +-- schema.sql
+|   +-- migrations
+|       +-- 20260806_class_partitions.sql
 +-- src
     +-- App.jsx
     +-- main.jsx
@@ -39,7 +42,9 @@ A React + Supabase admin dashboard for managing faculty, subjects, students, att
 ## Setup
 
 1. Create a Supabase project.
-2. Run the SQL from `supabase/schema.sql` in the Supabase SQL Editor.
+2. For a new project, run `supabase/schema.sql` in the Supabase SQL Editor.
+   For an existing project using the previous shared student table, run
+   `supabase/migrations/20260806_class_partitions.sql` once instead.
 3. Create an admin user in Supabase Authentication.
 4. Insert that admin email into `public.admin_users`.
 5. Copy `.env.example` to `.env`.
@@ -91,5 +96,7 @@ The SQL schema includes Row Level Security policies:
 - Admin users can manage faculty, subjects, students, attendance, and reports.
 - Faculty users can manage attendance for subjects in their department by semester and section.
 - Students do not log in and can only view the public readonly report view.
+- Creating a class automatically creates private student and attendance partitions.
+- Deleting a class permanently removes its subjects, students, attendance records, and partitions.
 
 Read `SUPABASE_SETUP_GUIDE.txt` for the complete Supabase and environment setup walkthrough.

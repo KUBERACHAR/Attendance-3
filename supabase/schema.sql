@@ -1,5 +1,11 @@
+-- Fresh database schema.
+-- Existing installations must run supabase/migrations/20260806_class_partitions.sql
+-- instead so current students and attendance records are preserved.
 
 create extension if not exists "pgcrypto";
+
+create schema if not exists class_data;
+revoke all on schema class_data from public, anon, authenticated;
 
 create table if not exists public.admin_users (
   id uuid primary key default gen_random_uuid(),
@@ -28,48 +34,55 @@ create table if not exists public.faculties (
 
 create table if not exists public.subjects (
   id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.academic_groups(id) on delete restrict,
   name text not null,
   code text not null unique,
   department text not null,
   semester text not null,
   section text not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (group_id, id)
 );
 
 create table if not exists public.students (
-  id uuid primary key default gen_random_uuid(),
-  roll_no text not null unique,
+  id uuid not null default gen_random_uuid(),
+  group_id uuid not null references public.academic_groups(id) on delete restrict,
+  roll_no text not null,
   name text not null,
   department text not null,
   semester text not null,
   section text not null default 'A',
-  group_id uuid references public.academic_groups(id) on delete set null,
-  created_at timestamptz not null default now()
-);
+  created_at timestamptz not null default now(),
+  primary key (group_id, id),
+  unique (group_id, roll_no)
+) partition by list (group_id);
 
 create table if not exists public.attendance_records (
-  id uuid primary key default gen_random_uuid(),
-  student_id uuid not null references public.students(id) on delete cascade,
-  subject_id uuid not null references public.subjects(id) on delete cascade,
+  id uuid not null default gen_random_uuid(),
+  group_id uuid not null,
+  student_id uuid not null,
+  subject_id uuid not null,
   attendance_date date not null default current_date,
   status text not null check (status in ('present', 'absent')),
   created_at timestamptz not null default now(),
-  unique (student_id, subject_id, attendance_date)
-);
-
--- Keep the schema compatible with databases created from earlier project versions.
-alter table public.faculties add column if not exists faculty_login_id text;
-alter table public.faculties add column if not exists is_active boolean not null default true;
-alter table public.subjects add column if not exists department text not null default 'General';
-alter table public.subjects add column if not exists section text;
-alter table public.students add column if not exists section text not null default 'A';
-alter table public.students add column if not exists group_id uuid references public.academic_groups(id) on delete set null;
+  primary key (group_id, id),
+  foreign key (group_id, student_id)
+    references public.students(group_id, id)
+    on delete cascade,
+  foreign key (group_id, subject_id)
+    references public.subjects(group_id, id)
+    on delete cascade,
+  unique (group_id, student_id, subject_id, attendance_date)
+) partition by list (group_id);
 
 create unique index if not exists faculties_faculty_login_id_key
   on public.faculties(faculty_login_id);
 
 create unique index if not exists academic_groups_unique_key
   on public.academic_groups(department, semester, section);
+
+create index if not exists attendance_records_subject_date_idx
+  on public.attendance_records(group_id, subject_id, attendance_date);
 
 create or replace function public.current_user_email()
 returns text
@@ -107,20 +120,7 @@ as $$
   limit 1;
 $$;
 
-drop view if exists public.attendance_calendar;
-drop view if exists public.attendance_report;
-drop policy if exists "Faculty can read assigned subjects" on public.subjects;
-drop policy if exists "Faculty can read department subjects" on public.subjects;
-drop policy if exists "Faculty read assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty create assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty update assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty delete assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty read department attendance" on public.attendance_records;
-drop policy if exists "Faculty create department attendance" on public.attendance_records;
-drop policy if exists "Faculty update department attendance" on public.attendance_records;
-drop policy if exists "Faculty delete department attendance" on public.attendance_records;
 drop function if exists public.is_faculty_for_subject(uuid);
-alter table public.subjects drop column if exists faculty_id;
 
 create or replace function public.is_faculty_for_subject(subject_uuid uuid)
 returns boolean
@@ -174,6 +174,125 @@ as $$
   limit 1;
 $$;
 
+create or replace function public.ensure_class_partitions(class_uuid uuid)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  class_suffix text;
+  student_partition text;
+  attendance_partition text;
+begin
+  if not exists (
+    select 1
+    from public.academic_groups
+    where id = class_uuid
+  ) then
+    raise exception 'Class % does not exist.', class_uuid;
+  end if;
+
+  class_suffix := replace(class_uuid::text, '-', '');
+  student_partition := 'students_c_' || class_suffix;
+  attendance_partition := 'attendance_c_' || class_suffix;
+
+  execute format(
+    'create table if not exists class_data.%I
+       partition of public.students for values in (%L)',
+    student_partition,
+    class_uuid
+  );
+
+  execute format(
+    'create table if not exists class_data.%I
+       partition of public.attendance_records for values in (%L)',
+    attendance_partition,
+    class_uuid
+  );
+
+  execute format(
+    'revoke all on table class_data.%I from public, anon, authenticated',
+    student_partition
+  );
+
+  execute format(
+    'revoke all on table class_data.%I from public, anon, authenticated',
+    attendance_partition
+  );
+end;
+$$;
+
+create or replace function public.create_class_partitions()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  perform public.ensure_class_partitions(new.id);
+  return new;
+end;
+$$;
+
+create or replace function public.delete_class_partitions()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  class_suffix text;
+begin
+  class_suffix := replace(old.id::text, '-', '');
+
+  delete from public.attendance_records where group_id = old.id;
+  delete from public.students where group_id = old.id;
+  delete from public.subjects where group_id = old.id;
+
+  execute format(
+    'drop table if exists class_data.%I',
+    'attendance_c_' || class_suffix
+  );
+
+  execute format(
+    'drop table if exists class_data.%I',
+    'students_c_' || class_suffix
+  );
+
+  return old;
+end;
+$$;
+
+drop trigger if exists create_class_storage on public.academic_groups;
+create trigger create_class_storage
+after insert on public.academic_groups
+for each row execute function public.create_class_partitions();
+
+drop trigger if exists delete_class_storage on public.academic_groups;
+create trigger delete_class_storage
+before delete on public.academic_groups
+for each row execute function public.delete_class_partitions();
+
+do $$
+declare
+  class_row record;
+begin
+  for class_row in
+    select id from public.academic_groups
+  loop
+    perform public.ensure_class_partitions(class_row.id);
+  end loop;
+end;
+$$;
+
+revoke all on function public.ensure_class_partitions(uuid) from public, anon, authenticated;
+revoke all on function public.create_class_partitions() from public, anon, authenticated;
+revoke all on function public.delete_class_partitions() from public, anon, authenticated;
+
+drop view if exists public.attendance_calendar;
+drop view if exists public.attendance_report;
+
 create or replace view public.attendance_report as
 select
   s.id as student_id,
@@ -199,18 +318,28 @@ select
       2
     )
   end as attendance_percentage
-
 from public.students s
 join public.subjects sub
-  on sub.department = s.department
- and sub.semester = s.semester
+  on sub.group_id = s.group_id
 left join public.attendance_records ar
-  on ar.student_id = s.id
+  on ar.group_id = s.group_id
+ and ar.student_id = s.id
  and ar.subject_id = sub.id
-group by s.id, sub.id;
+group by
+  s.group_id,
+  s.id,
+  s.roll_no,
+  s.name,
+  s.department,
+  s.semester,
+  s.section,
+  sub.id,
+  sub.name,
+  sub.code;
 
 create or replace view public.attendance_calendar as
 select
+  ar.group_id,
   ar.student_id,
   ar.subject_id,
   ar.attendance_date,
@@ -341,6 +470,8 @@ on public.attendance_records
 for delete
 using (public.is_faculty_for_subject(subject_id));
 
+grant select, insert, update, delete on public.students to authenticated;
+grant select, insert, update, delete on public.attendance_records to authenticated;
 grant execute on function public.get_faculty_login(text) to anon, authenticated;
 grant execute on function public.get_current_role() to authenticated;
 grant select on public.attendance_report to anon, authenticated;

@@ -41,11 +41,18 @@ happens, use npm.cmd instead of npm:
 1. Open your Supabase project dashboard.
 2. Go to SQL Editor.
 3. Click "New query".
-4. Open this project file:
+4. For a new Supabase project, open this project file:
 
    supabase/schema.sql
 
-5. Copy the full SQL content into the SQL Editor.
+   For an existing project created from the previous shared-table schema, open:
+
+   supabase/migrations/20260806_class_partitions.sql
+
+   Run that migration once instead. It preserves existing students and
+   attendance while moving them into class partitions.
+
+5. Copy the selected SQL file's full content into the SQL Editor.
 6. Click "Run".
 
 The SQL creates:
@@ -56,6 +63,7 @@ The SQL creates:
 - subjects
 - students
 - attendance_records
+- private per-class student and attendance partitions in class_data
 - attendance_report public readonly view
 - helper functions for role detection and faculty login ID lookup
 - Row Level Security policies for admin and faculty access
@@ -178,10 +186,14 @@ Admin:
 
 1. Login with admin email and password.
 2. Open Classes and create department, semester, and section combinations.
+   Creating a class automatically creates its student and attendance partitions.
 3. Add faculty.
 4. Add subjects for existing classes.
 5. Open Students, select a class, and paste multiple students.
 6. Manage attendance records and reports.
+
+Deleting a class permanently deletes its subjects, students, attendance records,
+and database partitions.
 
 Bulk student format:
 
