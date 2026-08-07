@@ -1,28 +1,31 @@
 -- Fresh database schema.
--- Existing installations must run supabase/migrations/20260806_class_partitions.sql
--- instead so current students and attendance records are preserved.
+-- Run this file once in the SQL Editor of a new Supabase project.
+-- Student rows are stored in a separate physical table for every class.
 
 create extension if not exists "pgcrypto";
 
-create schema if not exists class_data;
+create schema class_data;
 revoke all on schema class_data from public, anon, authenticated;
 
-create table if not exists public.admin_users (
+create table public.admin_users (
   id uuid primary key default gen_random_uuid(),
   email text not null unique,
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.academic_groups (
+create table public.academic_groups (
   id uuid primary key default gen_random_uuid(),
   department text not null,
   semester text not null,
   section text not null,
+  student_table_name text generated always as (
+    'students_c_' || replace(id::text, '-', '')
+  ) stored unique,
   created_at timestamptz not null default now(),
   unique (department, semester, section)
 );
 
-create table if not exists public.faculties (
+create table public.faculties (
   id uuid primary key default gen_random_uuid(),
   faculty_login_id text not null unique,
   name text not null,
@@ -32,9 +35,9 @@ create table if not exists public.faculties (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.subjects (
+create table public.subjects (
   id uuid primary key default gen_random_uuid(),
-  group_id uuid not null references public.academic_groups(id) on delete restrict,
+  group_id uuid not null references public.academic_groups(id) on delete cascade,
   name text not null,
   code text not null unique,
   department text not null,
@@ -44,44 +47,33 @@ create table if not exists public.subjects (
   unique (group_id, id)
 );
 
-create table if not exists public.students (
-  id uuid not null default gen_random_uuid(),
-  group_id uuid not null references public.academic_groups(id) on delete restrict,
-  roll_no text not null,
-  name text not null,
-  department text not null,
-  semester text not null,
-  section text not null default 'A',
-  created_at timestamptz not null default now(),
-  primary key (group_id, id),
-  unique (group_id, roll_no)
-) partition by list (group_id);
+create view public.students as
+select
+  null::uuid as id,
+  null::uuid as group_id,
+  null::text as roll_no,
+  null::text as name,
+  null::text as department,
+  null::text as semester,
+  null::text as section,
+  null::timestamptz as created_at
+where false;
 
-create table if not exists public.attendance_records (
-  id uuid not null default gen_random_uuid(),
+create table public.attendance_records (
+  id uuid primary key default gen_random_uuid(),
   group_id uuid not null,
   student_id uuid not null,
   subject_id uuid not null,
   attendance_date date not null default current_date,
   status text not null check (status in ('present', 'absent')),
   created_at timestamptz not null default now(),
-  primary key (group_id, id),
-  foreign key (group_id, student_id)
-    references public.students(group_id, id)
-    on delete cascade,
   foreign key (group_id, subject_id)
     references public.subjects(group_id, id)
     on delete cascade,
   unique (group_id, student_id, subject_id, attendance_date)
-) partition by list (group_id);
+);
 
-create unique index if not exists faculties_faculty_login_id_key
-  on public.faculties(faculty_login_id);
-
-create unique index if not exists academic_groups_unique_key
-  on public.academic_groups(department, semester, section);
-
-create index if not exists attendance_records_subject_date_idx
+create index attendance_records_subject_date_idx
   on public.attendance_records(group_id, subject_id, attendance_date);
 
 create or replace function public.current_user_email()
@@ -119,8 +111,6 @@ as $$
     and is_active = true
   limit 1;
 $$;
-
-drop function if exists public.is_faculty_for_subject(uuid);
 
 create or replace function public.is_faculty_for_subject(subject_uuid uuid)
 returns boolean
@@ -174,126 +164,293 @@ as $$
   limit 1;
 $$;
 
-create or replace function public.ensure_class_partitions(class_uuid uuid)
+create or replace function public.refresh_students_view(excluded_class_uuid uuid default null)
 returns void
 language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
 declare
-  class_suffix text;
-  student_partition text;
-  attendance_partition text;
+  students_query text;
 begin
-  if not exists (
-    select 1
-    from public.academic_groups
-    where id = class_uuid
-  ) then
-    raise exception 'Class % does not exist.', class_uuid;
+  select string_agg(
+    format(
+      'select s.id,
+              g.id as group_id,
+              s.roll_no,
+              s.name,
+              g.department,
+              g.semester,
+              g.section,
+              s.created_at
+         from class_data.%I s
+         join public.academic_groups g on g.id = %L::uuid',
+      g.student_table_name,
+      g.id
+    ),
+    ' union all '
+    order by g.created_at, g.id
+  )
+  into students_query
+  from public.academic_groups g
+  where (excluded_class_uuid is null or g.id <> excluded_class_uuid)
+    and to_regclass(format('class_data.%I', g.student_table_name)) is not null;
+
+  if students_query is null then
+    students_query := '
+      select
+        null::uuid as id,
+        null::uuid as group_id,
+        null::text as roll_no,
+        null::text as name,
+        null::text as department,
+        null::text as semester,
+        null::text as section,
+        null::timestamptz as created_at
+      where false';
   end if;
 
-  class_suffix := replace(class_uuid::text, '-', '');
-  student_partition := 'students_c_' || class_suffix;
-  attendance_partition := 'attendance_c_' || class_suffix;
-
-  execute format(
-    'create table if not exists class_data.%I
-       partition of public.students for values in (%L)',
-    student_partition,
-    class_uuid
-  );
-
-  execute format(
-    'create table if not exists class_data.%I
-       partition of public.attendance_records for values in (%L)',
-    attendance_partition,
-    class_uuid
-  );
-
-  execute format(
-    'revoke all on table class_data.%I from public, anon, authenticated',
-    student_partition
-  );
-
-  execute format(
-    'revoke all on table class_data.%I from public, anon, authenticated',
-    attendance_partition
-  );
+  execute 'create or replace view public.students as ' || students_query;
 end;
 $$;
 
-create or replace function public.create_class_partitions()
+create or replace function public.create_class_student_table()
 returns trigger
 language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
 begin
-  perform public.ensure_class_partitions(new.id);
+  execute format(
+    'create table class_data.%I (
+       id uuid primary key default gen_random_uuid(),
+       roll_no text not null unique,
+       name text not null,
+       created_at timestamptz not null default now()
+     )',
+    new.student_table_name
+  );
+
+  execute format(
+    'alter table class_data.%I enable row level security',
+    new.student_table_name
+  );
+
+  execute format(
+    'revoke all on table class_data.%I from public, anon, authenticated',
+    new.student_table_name
+  );
+
+  perform public.refresh_students_view();
   return new;
 end;
 $$;
 
-create or replace function public.delete_class_partitions()
+create or replace function public.delete_class_student_table()
 returns trigger
 language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
-declare
-  class_suffix text;
 begin
-  class_suffix := replace(old.id::text, '-', '');
-
-  delete from public.attendance_records where group_id = old.id;
-  delete from public.students where group_id = old.id;
-  delete from public.subjects where group_id = old.id;
+  perform public.refresh_students_view(old.id);
 
   execute format(
     'drop table if exists class_data.%I',
-    'attendance_c_' || class_suffix
-  );
-
-  execute format(
-    'drop table if exists class_data.%I',
-    'students_c_' || class_suffix
+    old.student_table_name
   );
 
   return old;
 end;
 $$;
 
-drop trigger if exists create_class_storage on public.academic_groups;
 create trigger create_class_storage
 after insert on public.academic_groups
-for each row execute function public.create_class_partitions();
+for each row execute function public.create_class_student_table();
 
-drop trigger if exists delete_class_storage on public.academic_groups;
 create trigger delete_class_storage
 before delete on public.academic_groups
-for each row execute function public.delete_class_partitions();
+for each row execute function public.delete_class_student_table();
 
-do $$
-declare
-  class_row record;
+create or replace function public.list_students()
+returns table(
+  id uuid,
+  group_id uuid,
+  roll_no text,
+  name text,
+  department text,
+  semester text,
+  section text,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
 begin
-  for class_row in
-    select id from public.academic_groups
-  loop
-    perform public.ensure_class_partitions(class_row.id);
-  end loop;
+  if not public.is_admin()
+     and public.current_faculty_id() is null then
+    raise exception 'Only admins and active faculty can view students.'
+      using errcode = '42501';
+  end if;
+
+  return query
+  select
+    s.id,
+    s.group_id,
+    s.roll_no,
+    s.name,
+    s.department,
+    s.semester,
+    s.section,
+    s.created_at
+  from public.students s
+  order by s.roll_no;
 end;
 $$;
 
-revoke all on function public.ensure_class_partitions(uuid) from public, anon, authenticated;
-revoke all on function public.create_class_partitions() from public, anon, authenticated;
-revoke all on function public.delete_class_partitions() from public, anon, authenticated;
+create or replace function public.upsert_class_students(
+  class_uuid uuid,
+  student_rows jsonb
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  target_table text;
+  affected_rows integer;
+begin
+  if not public.is_admin() then
+    raise exception 'Only admins can manage students.'
+      using errcode = '42501';
+  end if;
 
-drop view if exists public.attendance_calendar;
-drop view if exists public.attendance_report;
+  if student_rows is null or jsonb_typeof(student_rows) <> 'array' then
+    raise exception 'student_rows must be a JSON array.';
+  end if;
 
-create or replace view public.attendance_report as
+  select student_table_name
+  into target_table
+  from public.academic_groups
+  where id = class_uuid;
+
+  if target_table is null then
+    raise exception 'Class % does not exist.', class_uuid;
+  end if;
+
+  execute format(
+    'insert into class_data.%I (roll_no, name)
+     select distinct on (btrim(row_data.roll_no))
+       btrim(row_data.roll_no),
+       btrim(row_data.name)
+     from jsonb_to_recordset($1) as row_data(roll_no text, name text)
+     where nullif(btrim(row_data.roll_no), '''') is not null
+       and nullif(btrim(row_data.name), '''') is not null
+     order by btrim(row_data.roll_no)
+     on conflict (roll_no)
+     do update set name = excluded.name',
+    target_table
+  )
+  using student_rows;
+
+  get diagnostics affected_rows = row_count;
+  return affected_rows;
+end;
+$$;
+
+create or replace function public.delete_class_student(
+  class_uuid uuid,
+  student_uuid uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  target_table text;
+  affected_rows integer;
+begin
+  if not public.is_admin() then
+    raise exception 'Only admins can manage students.'
+      using errcode = '42501';
+  end if;
+
+  select student_table_name
+  into target_table
+  from public.academic_groups
+  where id = class_uuid;
+
+  if target_table is null then
+    raise exception 'Class % does not exist.', class_uuid;
+  end if;
+
+  execute format(
+    'delete from class_data.%I where id = $1',
+    target_table
+  )
+  using student_uuid;
+
+  get diagnostics affected_rows = row_count;
+
+  if affected_rows > 0 then
+    delete from public.attendance_records
+    where group_id = class_uuid
+      and student_id = student_uuid;
+  end if;
+
+  return affected_rows > 0;
+end;
+$$;
+
+create or replace function public.validate_attendance_student()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  target_table text;
+  student_exists boolean;
+begin
+  select student_table_name
+  into target_table
+  from public.academic_groups
+  where id = new.group_id;
+
+  if target_table is null then
+    raise exception 'Class % does not exist.', new.group_id;
+  end if;
+
+  execute format(
+    'select exists (
+       select 1
+       from class_data.%I
+       where id = $1
+     )',
+    target_table
+  )
+  into student_exists
+  using new.student_id;
+
+  if not student_exists then
+    raise exception 'Student % does not belong to class %.',
+      new.student_id,
+      new.group_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger validate_attendance_student
+before insert or update on public.attendance_records
+for each row execute function public.validate_attendance_student();
+
+create view public.attendance_report as
 select
   s.id as student_id,
   s.roll_no,
@@ -337,7 +494,7 @@ group by
   sub.name,
   sub.code;
 
-create or replace view public.attendance_calendar as
+create view public.attendance_calendar as
 select
   ar.group_id,
   ar.student_id,
@@ -350,45 +507,7 @@ alter table public.admin_users enable row level security;
 alter table public.academic_groups enable row level security;
 alter table public.faculties enable row level security;
 alter table public.subjects enable row level security;
-alter table public.students enable row level security;
 alter table public.attendance_records enable row level security;
-
-drop policy if exists "Admins manage admin users" on public.admin_users;
-drop policy if exists "Admins manage academic groups" on public.academic_groups;
-drop policy if exists "Faculty can read academic groups" on public.academic_groups;
-drop policy if exists "Admins manage faculties" on public.faculties;
-drop policy if exists "Faculty can read own profile" on public.faculties;
-drop policy if exists "Admins manage subjects" on public.subjects;
-drop policy if exists "Faculty can read assigned subjects" on public.subjects;
-drop policy if exists "Faculty can read department subjects" on public.subjects;
-drop policy if exists "Admins manage students" on public.students;
-drop policy if exists "Faculty can read students" on public.students;
-drop policy if exists "Admins manage attendance" on public.attendance_records;
-drop policy if exists "Faculty read assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty create assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty update assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty delete assigned attendance" on public.attendance_records;
-drop policy if exists "Faculty read department attendance" on public.attendance_records;
-drop policy if exists "Faculty create department attendance" on public.attendance_records;
-drop policy if exists "Faculty update department attendance" on public.attendance_records;
-drop policy if exists "Faculty delete department attendance" on public.attendance_records;
-
-drop policy if exists "Allow anon read faculties" on public.faculties;
-drop policy if exists "Allow anon insert faculties" on public.faculties;
-drop policy if exists "Allow anon update faculties" on public.faculties;
-drop policy if exists "Allow anon delete faculties" on public.faculties;
-drop policy if exists "Allow anon read subjects" on public.subjects;
-drop policy if exists "Allow anon insert subjects" on public.subjects;
-drop policy if exists "Allow anon update subjects" on public.subjects;
-drop policy if exists "Allow anon delete subjects" on public.subjects;
-drop policy if exists "Allow anon read students" on public.students;
-drop policy if exists "Allow anon insert students" on public.students;
-drop policy if exists "Allow anon update students" on public.students;
-drop policy if exists "Allow anon delete students" on public.students;
-drop policy if exists "Allow anon read attendance" on public.attendance_records;
-drop policy if exists "Allow anon insert attendance" on public.attendance_records;
-drop policy if exists "Allow anon update attendance" on public.attendance_records;
-drop policy if exists "Allow anon delete attendance" on public.attendance_records;
 
 create policy "Admins manage admin users"
 on public.admin_users
@@ -432,17 +551,6 @@ on public.subjects
 for select
 using (public.is_faculty_for_subject(id));
 
-create policy "Admins manage students"
-on public.students
-for all
-using (public.is_admin())
-with check (public.is_admin());
-
-create policy "Faculty can read students"
-on public.students
-for select
-using (public.current_faculty_id() is not null);
-
 create policy "Admins manage attendance"
 on public.attendance_records
 for all
@@ -470,9 +578,43 @@ on public.attendance_records
 for delete
 using (public.is_faculty_for_subject(subject_id));
 
-grant select, insert, update, delete on public.students to authenticated;
+revoke all on public.admin_users from anon, authenticated;
+revoke all on public.academic_groups from anon, authenticated;
+revoke all on public.faculties from anon, authenticated;
+revoke all on public.subjects from anon, authenticated;
+revoke all on public.students from anon, authenticated;
+revoke all on public.attendance_records from anon, authenticated;
+revoke all on public.attendance_report from anon, authenticated;
+revoke all on public.attendance_calendar from anon, authenticated;
+
+grant select, insert, update, delete on public.admin_users to authenticated;
+grant select, insert, update, delete on public.academic_groups to authenticated;
+grant select, insert, update, delete on public.faculties to authenticated;
+grant select, insert, update, delete on public.subjects to authenticated;
 grant select, insert, update, delete on public.attendance_records to authenticated;
-grant execute on function public.get_faculty_login(text) to anon, authenticated;
-grant execute on function public.get_current_role() to authenticated;
 grant select on public.attendance_report to anon, authenticated;
 grant select on public.attendance_calendar to anon, authenticated;
+
+revoke all on function public.current_user_email() from public;
+revoke all on function public.is_admin() from public;
+revoke all on function public.current_faculty_id() from public;
+revoke all on function public.is_faculty_for_subject(uuid) from public;
+revoke all on function public.get_faculty_login(text) from public;
+revoke all on function public.get_current_role() from public;
+revoke all on function public.refresh_students_view(uuid) from public;
+revoke all on function public.create_class_student_table() from public;
+revoke all on function public.delete_class_student_table() from public;
+revoke all on function public.list_students() from public;
+revoke all on function public.upsert_class_students(uuid, jsonb) from public;
+revoke all on function public.delete_class_student(uuid, uuid) from public;
+revoke all on function public.validate_attendance_student() from public;
+
+grant execute on function public.current_user_email() to authenticated;
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.current_faculty_id() to authenticated;
+grant execute on function public.is_faculty_for_subject(uuid) to authenticated;
+grant execute on function public.get_faculty_login(text) to anon, authenticated;
+grant execute on function public.get_current_role() to authenticated;
+grant execute on function public.list_students() to authenticated;
+grant execute on function public.upsert_class_students(uuid, jsonb) to authenticated;
+grant execute on function public.delete_class_student(uuid, uuid) to authenticated;

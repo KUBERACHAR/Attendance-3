@@ -87,19 +87,29 @@ function App() {
           ? supabase.from('faculties').select('*').order('created_at', { ascending: false })
           : supabase.from('faculties').select('*').eq('id', userRole.faculty_id),
         supabase.from('subjects').select('*').order('department').order('semester').order('code'),
-        supabase.from('students').select('*').order('roll_no'),
-        supabase.from('attendance_records').select('*, students(name, roll_no), subjects(name, code)').order('attendance_date', { ascending: false }),
+        supabase.rpc('list_students'),
+        supabase.from('attendance_records').select('*').order('attendance_date', { ascending: false }),
       ]);
 
       const firstError = [groupRes, facultyRes, subjectRes, studentRes, attendanceRes].find((res) => res.error)?.error;
       if (firstError) {
         setMessage(firstError.message);
       } else {
+        const loadedStudents = studentRes.data ?? [];
+        const loadedSubjects = subjectRes.data ?? [];
+        const studentsById = new Map(loadedStudents.map((student) => [`${student.group_id}:${student.id}`, student]));
+        const subjectsById = new Map(loadedSubjects.map((subject) => [subject.id, subject]));
+        const loadedAttendance = (attendanceRes.data ?? []).map((row) => ({
+          ...row,
+          students: studentsById.get(`${row.group_id}:${row.student_id}`) ?? null,
+          subjects: subjectsById.get(row.subject_id) ?? null,
+        }));
+
         setAcademicGroups(groupRes.data ?? []);
         setFaculties(facultyRes.data ?? []);
-        setSubjects(subjectRes.data ?? []);
-        setStudents(studentRes.data ?? []);
-        setAttendance(attendanceRes.data ?? []);
+        setSubjects(loadedSubjects);
+        setStudents(loadedStudents);
+        setAttendance(loadedAttendance);
       }
     } else {
       setAcademicGroups([]);
@@ -133,16 +143,13 @@ function App() {
   }, [loadData]);
 
   const stats = useMemo(() => {
-    const presentLike = attendance.filter((row) => row.status === 'present' || row.status === 'late').length;
-    const attendanceRate = attendance.length ? Math.round((presentLike / attendance.length) * 100) : 0;
-
     return [
       { label: 'Classes', value: academicGroups.length, icon: Layers },
       { label: 'Faculty', value: faculties.length, icon: Users },
       { label: 'Students', value: students.length, icon: GraduationCap },
       // { label: 'Attendance Rate', value: `${attendanceRate}%`, icon: CalendarCheck },
     ];
-  }, [academicGroups, attendance, faculties, students]);
+  }, [academicGroups, faculties, students]);
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -210,7 +217,7 @@ function App() {
 
         {message && <div className="notice error">{message}</div>}
 
-        {activeTab === 'dashboard' && isAdmin && <Dashboard stats={stats} report={report} attendance={attendance} />}
+        {activeTab === 'dashboard' && isAdmin && <Dashboard stats={stats} />}
         {activeTab === 'groups' && isAdmin && <GroupSection data={academicGroups} reload={loadData} />}
         {activeTab === 'faculties' && isAdmin && <FacultySection data={faculties} reload={loadData} />}
         {activeTab === 'subjects' && isAdmin && <SubjectSection data={subjects} groups={academicGroups} reload={loadData} />}
@@ -362,10 +369,7 @@ function NavButton({ id, activeTab, setActiveTab, icon: Icon, label }) {
   );
 }
 
-function Dashboard({ stats, report, attendance }) {
-  const lowAttendance = report.filter((row) => Number(row.attendance_percentage) < 75 && Number(row.total_classes) > 0).slice(0, 6);
-  const recent = attendance.slice(0, 6);
-
+function Dashboard({ stats }) {
   return (
     <div className="stack">
       <div className="stats-grid">
@@ -518,10 +522,6 @@ function StudentSection({ data, groups, reload }) {
     name,
     // email: email || null,
     // phone: phone || null,
-    department: selectedGroup.department,
-    semester: selectedGroup.semester,
-    section: selectedGroup.section,
-    group_id: selectedGroup.id,
   }));
 
   const submit = async (event) => {
@@ -541,7 +541,10 @@ function StudentSection({ data, groups, reload }) {
     if (!rows.length) return;
 
     setSaving(true);
-    const { error } = await supabase.from('students').upsert(buildStudentRows(rows), { onConflict: 'group_id,roll_no' });
+    const { error } = await supabase.rpc('upsert_class_students', {
+      class_uuid: selectedGroup.id,
+      student_rows: buildStudentRows(rows),
+    });
     if (error) alert(error.message);
     else {
       setBulkText('');
@@ -579,7 +582,10 @@ function StudentSection({ data, groups, reload }) {
     if (!selectedGroup || !excelRows.length) return;
 
     setUploading(true);
-    const { error } = await supabase.from('students').upsert(buildStudentRows(excelRows), { onConflict: 'group_id,roll_no' });
+    const { error } = await supabase.rpc('upsert_class_students', {
+      class_uuid: selectedGroup.id,
+      student_rows: buildStudentRows(excelRows),
+    });
     if (error) alert(error.message);
     else {
       setExcelRows([]);
@@ -591,7 +597,10 @@ function StudentSection({ data, groups, reload }) {
   };
 
   const remove = async (id, studentGroupId) => {
-    const { error } = await supabase.from('students').delete().eq('group_id', studentGroupId).eq('id', id);
+    const { error } = await supabase.rpc('delete_class_student', {
+      class_uuid: studentGroupId,
+      student_uuid: id,
+    });
     if (error) alert(error.message);
     else await reload();
   };
