@@ -29,6 +29,8 @@ A React + Supabase admin dashboard for managing faculty, subjects, students, att
 +-- package.json
 +-- supabase
 |   +-- schema.sql
+|   +-- migrations
+|       +-- 20260807_allow_duplicate_subject_codes.sql
 +-- src
     +-- App.jsx
     +-- main.jsx
@@ -58,6 +60,10 @@ npm install
 ```
 
 On Windows PowerShell, use `npm.cmd install` if script execution is blocked.
+
+For a project created with an older schema, run
+`supabase/migrations/20260807_allow_duplicate_subject_codes.sql` once to allow
+the same subject code in multiple classes.
 
 ## Run Locally
 

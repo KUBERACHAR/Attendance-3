@@ -39,7 +39,7 @@ create table public.subjects (
   id uuid primary key default gen_random_uuid(),
   group_id uuid not null references public.academic_groups(id) on delete cascade,
   name text not null,
-  code text not null unique,
+  code text not null,
   department text not null,
   semester text not null,
   section text not null,

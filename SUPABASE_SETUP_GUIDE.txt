@@ -48,6 +48,11 @@ happens, use npm.cmd instead of npm:
 5. Copy the SQL file's full content into the SQL Editor.
 6. Click "Run".
 
+For an existing project that reports "subjects_code_key" when adding the same
+subject code to another class, run this file once instead:
+
+   supabase/migrations/20260807_allow_duplicate_subject_codes.sql
+
 The SQL creates:
 
 - admin_users
