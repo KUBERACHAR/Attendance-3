@@ -457,6 +457,23 @@ textarea {
   grid-template-columns: repeat(5, minmax(140px, 1fr)) auto;
 }
 
+.report-export-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.export-message {
+  color: #256b4a;
+  font-size: 0.85rem;
+}
+
+.export-message.error {
+  color: #b42318;
+}
+
 .mark-check {
   height: 18px;
   min-height: 18px;

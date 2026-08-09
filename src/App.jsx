@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { read, utils } from 'xlsx';
+import { read, utils, writeFileXLSX } from 'xlsx';
 import {
   BarChart3,
   BookOpen,
@@ -226,7 +226,13 @@ function App() {
           <AttendanceSection data={attendance} students={students} subjects={subjects} groups={academicGroups} reload={loadData} />
         )}
         {activeTab === 'reports' && (
-          <ReportsSection data={report} attendance={reportAttendance} query={query} setQuery={setQuery} readonly={!canManage} />
+          <ReportsSection
+            data={report}
+            attendance={reportAttendance}
+            query={query}
+            setQuery={setQuery}
+            canExport={canManage}
+          />
         )}
         {mobileMenuOpen && (
           <div className="mobile-menu-drawer" role="dialog" aria-modal="true">
@@ -986,7 +992,7 @@ function CrudSection({ title, table, emptyForm, fields, columns, data, reload, t
   );
 }
 
-function ReportsSection({ data, attendance, query, setQuery, readonly }) {
+function ReportsSection({ data, attendance, query, setQuery, canExport }) {
   const [filters, setFilters] = useState({
     department: '',
     semester: '',
@@ -996,6 +1002,8 @@ function ReportsSection({ data, attendance, query, setQuery, readonly }) {
   });
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
   const filteredSemesters = data.filter((row) => row.department === filters.department);
   const filteredSections = filteredSemesters.filter((row) => row.semester === filters.semester);
   const filteredSubjects = filteredSections
@@ -1036,8 +1044,11 @@ function ReportsSection({ data, attendance, query, setQuery, readonly }) {
     : 0;
   const calendarDays = buildMonthCalendar(filters.month);
   const monthLabel = formatMonthLabel(filters.month);
+  const selectedSubject = filteredSubjects.find((subject) => subject.subject_id === filters.subject_id);
+  const selectedGroupId = eligibleStudents[0]?.group_id;
 
   const setFilter = (key, value) => {
+    setExportMessage('');
     setFilters((current) => {
       const next = { ...current, [key]: value };
       if (key === 'department') {
@@ -1062,8 +1073,102 @@ function ReportsSection({ data, attendance, query, setQuery, readonly }) {
     }
   };
 
+  const exportExcelReport = async () => {
+    if (!canExport || !hasReportSelection || !selectedSubject || !selectedGroupId) return;
+
+    setExporting(true);
+    setExportMessage('');
+
+    const { data: exportAttendance, error } = await supabase
+      .from('attendance_calendar')
+      .select('student_id, attendance_date, status')
+      .eq('group_id', selectedGroupId)
+      .eq('subject_id', filters.subject_id)
+      .lte('attendance_date', today)
+      .order('attendance_date', { ascending: true });
+
+    if (error) {
+      setExportMessage(`Unable to create the Excel report: ${error.message}`);
+      setExporting(false);
+      return;
+    }
+
+    const records = exportAttendance ?? [];
+    const attendanceDates = [...new Set(records.map((row) => String(row.attendance_date)))].sort();
+    const attendanceByStudentAndDate = new Map(
+      records.map((row) => [`${row.student_id}:${row.attendance_date}`, row.status]),
+    );
+    const className = `${filters.department} - Semester ${filters.semester} - Section ${filters.section}`;
+    const subjectName = `${selectedSubject.subject_code} - ${selectedSubject.subject_name}`;
+    const headers = [
+      'USN',
+      'Name',
+      ...attendanceDates.map(formatExportDate),
+      'Total days',
+      'Total Present',
+      'Total Absent',
+      'Percentage',
+    ];
+    const studentRows = eligibleStudents
+      .slice()
+      .sort((a, b) => String(a.roll_no).localeCompare(String(b.roll_no), undefined, { numeric: true }))
+      .map((student) => {
+        const statuses = attendanceDates.map((date) => attendanceByStudentAndDate.get(`${student.student_id}:${date}`) ?? '');
+        const presentCount = statuses.filter((status) => status === 'present').length;
+        const absentCount = statuses.filter((status) => status === 'absent').length;
+        const totalDays = presentCount + absentCount;
+        const percentage = totalDays ? Number((presentCount / totalDays).toFixed(4)) : 0;
+
+        return [
+          student.roll_no,
+          student.student_name,
+          ...statuses.map((status) => (status === 'present' ? 'P' : status === 'absent' ? 'A' : '')),
+          totalDays,
+          presentCount,
+          absentCount,
+          percentage,
+        ];
+      });
+
+    const worksheet = utils.aoa_to_sheet([
+      ['', `Class: ${className}`, '', '', `Subject: ${subjectName}`],
+      [],
+      headers,
+      ...studentRows,
+    ]);
+    const subjectStartColumn = Math.min(4, Math.max(1, headers.length - 1));
+    worksheet['!merges'] = [
+      { s: { r: 0, c: 1 }, e: { r: 0, c: Math.max(1, subjectStartColumn - 1) } },
+      { s: { r: 0, c: subjectStartColumn }, e: { r: 0, c: headers.length - 1 } },
+    ];
+    worksheet['!cols'] = headers.map((header, index) => ({
+      wch: index === 0 ? 16 : index === 1 ? 28 : ['Total days', 'Total Present', 'Total Absent', 'Percentage'].includes(header) ? 15 : 13,
+    }));
+    const percentageColumn = utils.encode_col(headers.length - 1);
+    for (let row = 4; row < 4 + studentRows.length; row += 1) {
+      const cell = worksheet[`${percentageColumn}${row}`];
+      if (cell) cell.z = '0.00"%"';
+    }
+
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, worksheet, safeWorksheetName(selectedSubject.subject_code));
+    const firstDate = attendanceDates[0] ?? today;
+    const filename = `${safeFilename(filters.department)}_Sem${safeFilename(filters.semester)}_${safeFilename(filters.section)}_${safeFilename(selectedSubject.subject_code)}_Attendance_${firstDate}_to_${today}.xlsx`;
+
+    try {
+      writeFileXLSX(workbook, filename);
+      setExportMessage(records.length
+        ? 'Excel report downloaded. Your browser may ask you to choose where to save it.'
+        : 'Excel report downloaded with all class students; no attendance has been recorded for this subject yet.');
+    } catch (exportError) {
+      setExportMessage(`Unable to download the Excel report: ${exportError.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
-    <Panel title={readonly ? 'Attendance Reports' : 'Attendance Reports'}>
+    <Panel title="Attendance Reports">
       <div className="filter-grid">
         <label>
           <span>Department</span>
@@ -1100,6 +1205,20 @@ function ReportsSection({ data, attendance, query, setQuery, readonly }) {
           <input type="month" required value={filters.month} onChange={(event) => setFilter('month', event.target.value)} />
         </label>
       </div>
+      {canExport && (
+        <div className="report-export-actions">
+          <button
+            className="primary-button"
+            type="button"
+            onClick={exportExcelReport}
+            disabled={exporting || !hasReportSelection || !hasSupabaseConfig}
+          >
+            {exporting ? <Loader2 className="spin" size={17} /> : <FileSpreadsheet size={17} />}
+            <span>{exporting ? 'Preparing Excel...' : 'Export Excel Report'}</span>
+          </button>
+          {exportMessage && <small className={exportMessage.startsWith('Unable') ? 'export-message error' : 'export-message'}>{exportMessage}</small>}
+        </div>
+      )}
       <div className="student-search">
         <div className="search-row">
           <Search size={18} />
@@ -1325,6 +1444,20 @@ function parseStudentRows(rows) {
 
 function normalizeHeader(value) {
   return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function formatExportDate(dateValue) {
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  if (!year || !month || !day) return String(dateValue);
+  return `${String(day).padStart(2, '0')}-${String(month).padStart(2, '0')}-${year}`;
+}
+
+function safeFilename(value) {
+  return String(value ?? 'report').replace(/[<>:"/\\|?*]+/g, '-').replace(/\s+/g, '_');
+}
+
+function safeWorksheetName(value) {
+  return String(value ?? 'Attendance').replace(/[\\/?*:\x5B\x5D]/g, '-').slice(0, 31) || 'Attendance';
 }
 
 function roleLabel(role) {
