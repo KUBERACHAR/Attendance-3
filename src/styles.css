@@ -277,16 +277,19 @@ textarea {
 
 .primary-button {
   align-items: center;
-  background: #186c68;
+  background: #1fbf69;
   border: 0;
   border-radius: 8px;
-  color: white;
+  color: rgb(255, 255, 255);
   cursor: pointer;
   display: inline-flex;
   gap: 8px;
   justify-content: center;
   min-height: 42px;
   padding: 10px 16px;
+  span{
+    color: #ffffff;
+  }
 }
 
 .secondary-button {
@@ -811,10 +814,10 @@ td {
 }
 
 .app-footer__dev {
-  color: #186c68;
+  color: #0d0d0d91;
   font-weight: 700;
   a{
-    color: #186c68;
+    color: #2308efb7;
     text-decoration: none;
   }
 }
