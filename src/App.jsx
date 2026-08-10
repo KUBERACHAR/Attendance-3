@@ -1353,7 +1353,6 @@ function Panel({ title, children }) {
     <section className="panel">
       <div className="panel-header">
         <h2>{title}</h2>
-        <Plus size={18} aria-hidden="true" />
       </div>
       {children}
     </section>

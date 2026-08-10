@@ -406,10 +406,6 @@ textarea {
   margin: 0;
 }
 
-.panel-header svg {
-  color: #8ba0b4;
-}
-
 .form-grid {
   display: grid;
   gap: 13px;
