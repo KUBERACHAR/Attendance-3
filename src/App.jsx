@@ -23,6 +23,20 @@ const emptyFaculty = { faculty_login_id: '', name: '', email: '', department: ''
 const emptyGroup = { department: '', semester: '', section: '' };
 const emptySubject = { name: '', code: '', class_id: '' };
 
+async function fetchAllRows(createQuery) {
+  const pageSize = 1000;
+  const rows = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await createQuery().range(from, from + pageSize - 1);
+    if (error) return { data: [], error };
+
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) return { data: rows, error: null };
+  }
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('reports');
   const [session, setSession] = useState(null);
@@ -32,8 +46,7 @@ function App() {
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
   const [attendance, setAttendance] = useState([]);
-  const [report, setReport] = useState([]);
-  const [reportAttendance, setReportAttendance] = useState([]);
+  const [reportFilters, setReportFilters] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
@@ -67,18 +80,20 @@ function App() {
     setLoading(true);
     setMessage('');
 
-    const [reportRes, reportAttendanceRes] = await Promise.all([
-      supabase.from('attendance_report').select('*').order('student_name', { ascending: true }),
-      supabase.from('attendance_calendar').select('*').order('attendance_date', { ascending: true }),
-    ]);
-    if (reportRes.error) {
-      setMessage(reportRes.error.message);
+    const { data: loadedReportFilters, error: reportFiltersError } = await supabase
+      .from('report_filters')
+      .select('*')
+      .order('department')
+      .order('semester')
+      .order('section')
+      .order('subject_code');
+    if (reportFiltersError) {
+      setMessage(reportFiltersError.message);
       setLoading(false);
       return;
     }
 
-    setReport(reportRes.data ?? []);
-    setReportAttendance(reportAttendanceRes.data ?? []);
+    setReportFilters(loadedReportFilters ?? []);
 
     if (canManage) {
       const [groupRes, facultyRes, subjectRes, studentRes, attendanceRes] = await Promise.all([
@@ -227,8 +242,7 @@ function App() {
         )}
         {activeTab === 'reports' && (
           <ReportsSection
-            data={report}
-            attendance={reportAttendance}
+            data={reportFilters}
             query={query}
             setQuery={setQuery}
             canExport={canManage}
@@ -992,7 +1006,7 @@ function CrudSection({ title, table, emptyForm, fields, columns, data, reload, t
   );
 }
 
-function ReportsSection({ data, attendance, query, setQuery, canExport }) {
+function ReportsSection({ data, query, setQuery, canExport }) {
   const [filters, setFilters] = useState({
     department: '',
     semester: '',
@@ -1004,6 +1018,9 @@ function ReportsSection({ data, attendance, query, setQuery, canExport }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
+  const [report, setReport] = useState([]);
+  const [attendance, setAttendance] = useState([]);
+  const [reportError, setReportError] = useState('');
   const filteredSemesters = data.filter((row) => row.department === filters.department);
   const filteredSections = filteredSemesters.filter((row) => row.semester === filters.semester);
   const filteredSubjects = filteredSections
@@ -1011,14 +1028,8 @@ function ReportsSection({ data, attendance, query, setQuery, canExport }) {
     .filter((row, index, rows) => rows.findIndex((item) => item.subject_id === row.subject_id) === index)
     .sort((a, b) => String(a.subject_code).localeCompare(String(b.subject_code), undefined, { numeric: true }));
   const hasReportSelection = filters.department && filters.semester && filters.section && filters.subject_id;
-  const eligibleStudents = hasReportSelection
-    ? data.filter((row) => (
-      row.department === filters.department
-      && row.semester === filters.semester
-      && row.section === filters.section
-      && row.subject_id === filters.subject_id
-    ))
-    : [];
+  const selectedSubject = filteredSubjects.find((subject) => subject.subject_id === filters.subject_id);
+  const eligibleStudents = report;
   const normalizedQuery = query.trim().toLowerCase();
   const searchTokens = normalizedQuery.split(/[^a-z0-9]+/).filter(Boolean);
   const searchResults = normalizedQuery
@@ -1044,8 +1055,57 @@ function ReportsSection({ data, attendance, query, setQuery, canExport }) {
     : 0;
   const calendarDays = buildMonthCalendar(filters.month);
   const monthLabel = formatMonthLabel(filters.month);
-  const selectedSubject = filteredSubjects.find((subject) => subject.subject_id === filters.subject_id);
-  const selectedGroupId = eligibleStudents[0]?.group_id;
+  const selectedGroupId = selectedSubject?.group_id;
+  const selectedSubjectId = selectedSubject?.subject_id;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!hasReportSelection || !selectedGroupId || !selectedSubjectId) {
+      setReport([]);
+      setAttendance([]);
+      setReportError('');
+      return () => { cancelled = true; };
+    }
+
+    const loadSelectedReport = async () => {
+      setReport([]);
+      setAttendance([]);
+      setReportError('');
+      const [reportResult, attendanceResult] = await Promise.all([
+        fetchAllRows(() => supabase
+          .from('attendance_report')
+          .select('*')
+          .eq('group_id', selectedGroupId)
+          .eq('subject_id', selectedSubjectId)
+          .order('student_name', { ascending: true })
+          .order('student_id', { ascending: true })),
+        fetchAllRows(() => supabase
+          .from('attendance_calendar')
+          .select('*')
+          .eq('group_id', selectedGroupId)
+          .eq('subject_id', selectedSubjectId)
+          .order('student_id', { ascending: true })
+          .order('attendance_date', { ascending: true })),
+      ]);
+
+      if (cancelled) return;
+
+      const error = reportResult.error ?? attendanceResult.error;
+      if (error) {
+        setReport([]);
+        setAttendance([]);
+        setReportError(error.message);
+        return;
+      }
+
+      setReport(reportResult.data);
+      setAttendance(attendanceResult.data);
+    };
+
+    loadSelectedReport();
+    return () => { cancelled = true; };
+  }, [hasReportSelection, selectedGroupId, selectedSubjectId]);
 
   const setFilter = (key, value) => {
     setExportMessage('');
@@ -1261,6 +1321,7 @@ function ReportsSection({ data, attendance, query, setQuery, canExport }) {
           </div>
         )}
       </div>
+      {reportError && <div className="notice error">{reportError}</div>}
       {selectedStudent ? (
         <div className="attendance-report-dashboard">
           <div className="attendance-report-overview">

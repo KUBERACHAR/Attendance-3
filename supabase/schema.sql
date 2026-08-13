@@ -503,6 +503,18 @@ select
   ar.status
 from public.attendance_records ar;
 
+create view public.report_filters as
+select
+  g.id as group_id,
+  g.department,
+  g.semester,
+  g.section,
+  sub.id as subject_id,
+  sub.name as subject_name,
+  sub.code as subject_code
+from public.academic_groups g
+join public.subjects sub on sub.group_id = g.id;
+
 alter table public.admin_users enable row level security;
 alter table public.academic_groups enable row level security;
 alter table public.faculties enable row level security;
@@ -586,6 +598,7 @@ revoke all on public.students from anon, authenticated;
 revoke all on public.attendance_records from anon, authenticated;
 revoke all on public.attendance_report from anon, authenticated;
 revoke all on public.attendance_calendar from anon, authenticated;
+revoke all on public.report_filters from anon, authenticated;
 
 grant select, insert, update, delete on public.admin_users to authenticated;
 grant select, insert, update, delete on public.academic_groups to authenticated;
@@ -594,6 +607,7 @@ grant select, insert, update, delete on public.subjects to authenticated;
 grant select, insert, update, delete on public.attendance_records to authenticated;
 grant select on public.attendance_report to anon, authenticated;
 grant select on public.attendance_calendar to anon, authenticated;
+grant select on public.report_filters to anon, authenticated;
 
 revoke all on function public.current_user_email() from public;
 revoke all on function public.is_admin() from public;
